@@ -132,6 +132,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
   white-space: nowrap;
   position: relative;
   flex-shrink: 0;
+  user-select: none;
 }
 .tab:hover { color: var(--text2); background: rgba(255,255,255,0.03); }
 .tab.active {
@@ -148,11 +149,11 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 .tab-dot.neutro   { background: var(--text3); }
 
 .tab-close {
-  width: 18px; height: 18px; border-radius: 4px; border: none;
+  width: 18px; height: 18px; border-radius: 4px;
   background: transparent; color: var(--text3); cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   font-size: 12px; transition: all 0.15s; flex-shrink: 0;
-  opacity: 0;
+  opacity: 0; line-height: 1;
 }
 .tab:hover .tab-close { opacity: 1; }
 .tab-close:hover { background: var(--vermelho-bg); color: var(--vermelho); }
@@ -323,7 +324,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 
 /* ── BOTÃO EDITAR NA ABA ── */
 .tab-action {
-  width: 18px; height: 18px; border-radius: 4px; border: none;
+  width: 18px; height: 18px; border-radius: 4px;
   background: transparent; color: var(--text3); cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   transition: all 0.15s; flex-shrink: 0; opacity: 0;
