@@ -8,21 +8,16 @@
    posicoes: { galpaoId: { extId: { top, left } } }
    ─────────────────────────────────────────────────────────── */
 
-let galpoes = {
-  "A": { nome: "Galpão A", imagem: "imagens/galpaoA.png" }
+// Dados padrão usados APENAS na primeira execução (localStorage vazio)
+const DADOS_PADRAO = {
+  galpoes:  { "A": { nome: "Galpão A", imagem: "imagens/galpaoA.png" } },
+  dados:    { "A": { "1": { tipo: "Pó Químico ABC", validade: "2026-05-10", setor: "Porta Principal" }, "2": { tipo: "CO₂", validade: "2026-03-25", setor: "Corredor B" } } },
+  posicoes: { "A": { "1": { top: "100px", left: "200px" }, "2": { top: "250px", left: "400px" } } }
 };
-let dados = {
-  "A": {
-    "1": { tipo: "Pó Químico ABC", validade: "2026-05-10", setor: "Porta Principal" },
-    "2": { tipo: "CO₂",            validade: "2026-03-25", setor: "Corredor B" }
-  }
-};
-let posicoes = {
-  "A": {
-    "1": { top: "100px", left: "200px" },
-    "2": { top: "250px", left: "400px" }
-  }
-};
+
+let galpoes  = {};
+let dados    = {};
+let posicoes = {};
 
 let galpaoAtivo  = "A";
 let modoAtual    = null;   // null | "mover" | "colocar"
@@ -60,17 +55,33 @@ function carregarStorage() {
     const g = localStorage.getItem("fm_galpoes");
     const d = localStorage.getItem("fm_dados");
     const p = localStorage.getItem("fm_posicoes");
-    if (g) galpoes  = JSON.parse(g);
-    if (d) dados    = JSON.parse(d);
-    if (p) posicoes = JSON.parse(p);
+
+    if (g && d && p) {
+      // Dados existentes no localStorage
+      galpoes  = JSON.parse(g);
+      dados    = JSON.parse(d);
+      posicoes = JSON.parse(p);
+    } else {
+      // Primeira execução — usa dados de exemplo
+      galpoes  = JSON.parse(JSON.stringify(DADOS_PADRAO.galpoes));
+      dados    = JSON.parse(JSON.stringify(DADOS_PADRAO.dados));
+      posicoes = JSON.parse(JSON.stringify(DADOS_PADRAO.posicoes));
+    }
+
     // Garante que o galpão ativo existe
     if (!galpoes[galpaoAtivo]) galpaoAtivo = Object.keys(galpoes)[0];
-    // Garante estrutura para cada galpão
+
+    // Garante estrutura para CADA galpão (sem vazar dados entre eles)
     Object.keys(galpoes).forEach(gid => {
       if (!dados[gid])    dados[gid]    = {};
       if (!posicoes[gid]) posicoes[gid] = {};
     });
-  } catch(e) {}
+  } catch(e) {
+    // Fallback seguro
+    galpoes  = JSON.parse(JSON.stringify(DADOS_PADRAO.galpoes));
+    dados    = JSON.parse(JSON.stringify(DADOS_PADRAO.dados));
+    posicoes = JSON.parse(JSON.stringify(DADOS_PADRAO.posicoes));
+  }
 }
 
 /* ── STATUS ── */
@@ -261,9 +272,10 @@ function confirmarExcluirGalpao() {
    PONTOS
    ════════════════════════════════════════ */
 function renderizarPontos() {
-  const pontoEls = getPontoEls();
-  pontoEls.forEach(el => el.remove());
-  pontoEls.clear();
+  // Remove TODOS os pontos do DOM (não só os do Map, que pode estar vazio no novo galpão)
+  document.querySelectorAll("#mapa .ponto").forEach(el => el.remove());
+  // Limpa todos os Maps de referência (troca de galpão invalida tudo)
+  Object.keys(pontoElsPorGalpao).forEach(gid => pontoElsPorGalpao[gid].clear());
   const ext = dados[galpaoAtivo] || {};
   Object.keys(ext).forEach(id => renderPonto(id));
   atualizarStats();
