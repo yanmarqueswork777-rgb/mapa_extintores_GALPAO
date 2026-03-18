@@ -140,8 +140,11 @@ function renderizarAbas() {
     return `
       <button class="tab ${ativo}" onclick="trocarGalpao('${gid}')">
         <span class="tab-dot ${status}"></span>
-        <span>${g.nome}</span>
+        <span class="tab-nome">${g.nome}</span>
         <span style="font-size:10px;color:var(--text3);font-weight:500">${qtd}</span>
+        <button class="tab-action" onclick="abrirRenomearGalpao(event,'${gid}')" title="Renomear galpão">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
         <button class="tab-close" onclick="pedirExcluirGalpao(event,'${gid}')" title="Excluir galpão">✕</button>
       </button>`;
   }).join("");
@@ -673,6 +676,41 @@ function exportarRelatorio() {
   a.download = `extintores-${hoje.replace(/\//g,"-")}.txt`;
   a.click();
   toast("Relatório exportado!", "ok");
+}
+
+/* ════════════════════════════════════════
+   RENOMEAR GALPÃO
+   ════════════════════════════════════════ */
+function abrirRenomearGalpao(e, gid) {
+  e.stopPropagation();
+  const nome = galpoes[gid]?.nome || "";
+  document.getElementById("renomearGalpaoId").value    = gid;
+  document.getElementById("renomearGalpaoNome").value  = nome;
+  document.getElementById("renomearGalpaoImg").value   = galpoes[gid]?.imagem || "";
+  document.getElementById("modalRenomear").classList.remove("hidden");
+  setTimeout(() => {
+    const input = document.getElementById("renomearGalpaoNome");
+    input.focus();
+    input.select();
+  }, 100);
+}
+function fecharModalRenomear() {
+  document.getElementById("modalRenomear").classList.add("hidden");
+}
+function confirmarRenomear() {
+  const gid    = document.getElementById("renomearGalpaoId").value;
+  const nome   = document.getElementById("renomearGalpaoNome").value.trim();
+  const imagem = document.getElementById("renomearGalpaoImg").value.trim();
+  if (!nome) { toast("Informe um nome!", "err"); return; }
+  galpoes[gid].nome   = nome;
+  galpoes[gid].imagem = imagem;
+  fecharModalRenomear();
+  salvarStorageImediato();
+  // Se é o galpão ativo, recarrega a imagem caso tenha mudado
+  if (gid === galpaoAtivo) carregarMapa();
+  renderizarAbas();
+  atualizarStats(); // atualiza o label do sidebar
+  toast(`${nome} atualizado!`, "ok");
 }
 
 /* ════════════════════════════════════════

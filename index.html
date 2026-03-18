@@ -139,6 +139,35 @@
   </div>
 </div>
 
+<!-- ══ MODAL: RENOMEAR GALPÃO ══ -->
+<div id="modalRenomear" class="modal-overlay hidden" onclick="fecharModalRenomear()">
+  <div class="modal-box modal-box-sm" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>Editar Galpão</h2>
+      <button class="modal-close" onclick="fecharModalRenomear()">✕</button>
+    </div>
+    <div class="modal-form">
+      <input type="hidden" id="renomearGalpaoId">
+      <div class="mf-field">
+        <label>Nome do Galpão</label>
+        <input type="text" id="renomearGalpaoNome" placeholder="Ex: Galpão B, Almoxarifado...">
+      </div>
+      <div class="mf-field">
+        <label>Caminho da Imagem</label>
+        <input type="text" id="renomearGalpaoImg" placeholder="imagens/galpaoB.png">
+        <span style="display:block;font-size:11px;color:var(--text3);margin-top:5px">Deixe vazio para usar fundo com grade</span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="mf-btn secondary" onclick="fecharModalRenomear()">Cancelar</button>
+      <button class="mf-btn primary" onclick="confirmarRenomear()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+        Salvar
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- ════════════════════════════════
      LAYOUT PRINCIPAL
      ════════════════════════════════ -->
