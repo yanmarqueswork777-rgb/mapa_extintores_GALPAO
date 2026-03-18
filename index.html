@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FireMap — Controle de Extintores</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://unpkg.com/@panzoom/panzoom/dist/panzoom.min.js"></script>
+</head>
+<body>
+
+<div id="toast-container"></div>
+
+<!-- ══ MODAL: ESCOLHER MODO DE EDIÇÃO ══ -->
+<div id="modalEdicao" class="modal-overlay hidden" onclick="fecharModalEdicao()">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>O que deseja fazer?</h2>
+      <button class="modal-close" onclick="fecharModalEdicao()">✕</button>
+    </div>
+    <div class="modal-opcoes">
+      <button class="modal-opcao" onclick="entrarModoMover()">
+        <div class="opcao-icon mover-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>
+        </div>
+        <div class="opcao-texto">
+          <strong>Mover existente</strong>
+          <span>Arraste um extintor para reposicioná-lo</span>
+        </div>
+      </button>
+      <button class="modal-opcao" onclick="entrarModoCriar()">
+        <div class="opcao-icon criar-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+        </div>
+        <div class="opcao-texto">
+          <strong>Criar novo</strong>
+          <span>Cadastre um extintor e posicione-o no mapa</span>
+        </div>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: CADASTRAR EXTINTOR ══ -->
+<div id="modalCadastro" class="modal-overlay hidden" onclick="cancelarCadastro()">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>Novo Extintor</h2>
+      <button class="modal-close" onclick="cancelarCadastro()">✕</button>
+    </div>
+    <div class="modal-form">
+      <div class="mf-field">
+        <label>Identificação</label>
+        <div class="id-row">
+          <div class="id-input-wrap">
+            <span class="id-prefix">#</span>
+            <input type="text" id="novoId" placeholder="ex: 01, A1, EXT-03..." oninput="validarId(this.value)">
+          </div>
+          <button class="id-sugestao-btn" onclick="usarProximoId()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+            Sugerir
+          </button>
+        </div>
+        <span class="id-feedback" id="idFeedback"></span>
+      </div>
+      <div class="mf-field">
+        <label>Setor / Local</label>
+        <input type="text" id="novoSetor" placeholder="Ex: Porta Lateral, Corredor B...">
+      </div>
+      <div class="mf-field">
+        <label>Tipo do Extintor</label>
+        <select id="novoTipo">
+          <option>Pó Químico ABC</option>
+          <option>CO₂</option>
+          <option>Água</option>
+          <option>Espuma</option>
+          <option>Halotron</option>
+        </select>
+      </div>
+      <div class="mf-field">
+        <label>Data de Validade</label>
+        <input type="date" id="novaValidade">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="mf-btn secondary" onclick="cancelarCadastro()">Cancelar</button>
+      <button class="mf-btn primary" id="btnConfirmarCadastro" onclick="confirmarCadastro()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+        Confirmar e Posicionar
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: NOVO GALPÃO ══ -->
+<div id="modalGalpao" class="modal-overlay hidden" onclick="fecharModalGalpao()">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>Novo Galpão</h2>
+      <button class="modal-close" onclick="fecharModalGalpao()">✕</button>
+    </div>
+    <div class="modal-form">
+      <div class="mf-field">
+        <label>Nome do Galpão</label>
+        <input type="text" id="nomeGalpao" placeholder="Ex: Galpão B, Almoxarifado, Bloco 2...">
+      </div>
+      <div class="mf-field">
+        <label>Caminho da Imagem (planta baixa)</label>
+        <input type="text" id="imagemGalpao" placeholder="imagens/galpaoB.png">
+        <span style="display:block;font-size:11px;color:var(--text3);margin-top:5px">Deixe vazio para usar fundo padrão com grade</span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="mf-btn secondary" onclick="fecharModalGalpao()">Cancelar</button>
+      <button class="mf-btn primary" onclick="confirmarNovoGalpao()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+        Criar Galpão
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: CONFIRMAR EXCLUSÃO DE GALPÃO ══ -->
+<div id="modalExcluirGalpao" class="modal-overlay hidden" onclick="fecharModalExcluirGalpao()">
+  <div class="modal-box modal-box-sm" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>Excluir Galpão</h2>
+      <button class="modal-close" onclick="fecharModalExcluirGalpao()">✕</button>
+    </div>
+    <div style="padding:20px">
+      <p id="textoExcluirGalpao" style="font-size:14px;color:var(--text2);line-height:1.6"></p>
+    </div>
+    <div class="modal-footer">
+      <button class="mf-btn secondary" onclick="fecharModalExcluirGalpao()">Cancelar</button>
+      <button class="mf-btn danger" onclick="confirmarExcluirGalpao()">Excluir mesmo assim</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════
+     LAYOUT PRINCIPAL
+     ════════════════════════════════ -->
+<aside id="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-mark">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2C9 7 5 8 5 13a7 7 0 0014 0c0-5-4-6-7-11z" fill="currentColor"/>
+        <path d="M12 12c-1 2 0 4 1.5 4.5" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <span class="logo-text">FireMap</span>
+  </div>
+
+  <nav class="sidebar-nav">
+    <button class="nav-item active" onclick="setView('mapa')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      Mapa
+    </button>
+    <button class="nav-item" onclick="setView('lista')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1.5" fill="currentColor" stroke="none"/><circle cx="3" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="3" cy="18" r="1.5" fill="currentColor" stroke="none"/></svg>
+      Lista
+    </button>
+  </nav>
+
+  <!-- Stats do galpão ativo -->
+  <div class="stats-label" id="statsLabel">Galpão A</div>
+  <div class="stat-cards">
+    <div class="stat-card"><span class="sc-num" id="statTotal">0</span><span class="sc-label">Total</span></div>
+    <div class="stat-card ok"><span class="sc-num" id="statOk">0</span><span class="sc-label">Em dia</span></div>
+    <div class="stat-card warn"><span class="sc-num" id="statWarn">0</span><span class="sc-label">Vencendo</span></div>
+    <div class="stat-card danger"><span class="sc-num" id="statExp">0</span><span class="sc-label">Vencidos</span></div>
+  </div>
+
+  <div class="sidebar-divider"></div>
+
+  <div class="sidebar-actions">
+    <button id="btnEdicao" class="action-btn" onclick="toggleEdicao()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      Modo Edição
+    </button>
+    <button class="action-btn secondary" onclick="resetZoom()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+      Resetar Zoom
+    </button>
+    <button class="action-btn secondary" onclick="exportarRelatorio()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Exportar Relatório
+    </button>
+  </div>
+
+  <div id="modoEdBadge" class="modo-badge hidden">
+    <span class="badge-dot"></span>
+    <span id="modoEdBadgeTexto"></span>
+  </div>
+
+  <div class="sidebar-divider"></div>
+  <div class="legenda">
+    <p class="legenda-titulo">Legenda</p>
+    <div class="leg-row"><span class="leg-dot l-verde"></span><span>Em dia</span></div>
+    <div class="leg-row"><span class="leg-dot l-amarelo"></span><span>Vence em 30 dias</span></div>
+    <div class="leg-row"><span class="leg-dot l-vermelho"></span><span>Vencido</span></div>
+  </div>
+</aside>
+
+<main id="main">
+  <!-- TOPBAR com ABAS DE GALPÃO -->
+  <div id="topbar">
+    <div class="topbar-left">
+      <h1 id="viewTitle">Mapa de Extintores</h1>
+      <span id="viewSub" class="topbar-sub"></span>
+    </div>
+    <div class="topbar-right">
+      <div class="search-box">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="searchInput" placeholder="Buscar extintor..." oninput="filtrarLista(this.value)">
+      </div>
+    </div>
+  </div>
+
+  <!-- BARRA DE ABAS DOS GALPÕES -->
+  <div id="tabsBar">
+    <div id="tabsList"></div>
+    <button id="btnAddGalpao" onclick="abrirModalGalpao()" title="Adicionar galpão">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Novo Galpão
+    </button>
+  </div>
+
+  <!-- VIEW MAPA -->
+  <div id="viewMapa" class="view">
+    <div id="mapaContainer">
+      <div id="mapa">
+        <img id="mapaImg" src="" alt="Planta" draggable="false">
+      </div>
+    </div>
+  </div>
+
+  <!-- VIEW LISTA -->
+  <div id="viewLista" class="view hidden">
+    <div id="listaContainer"></div>
+  </div>
+
+  <!-- PAINEL DETALHES -->
+  <div id="detailPanel" class="detail-panel hidden">
+    <div class="dp-header">
+      <div>
+        <span class="dp-id" id="dpId"></span>
+        <h2 class="dp-nome" id="dpNome"></h2>
+      </div>
+      <button class="dp-close" onclick="fecharPainel()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="dp-status-bar" id="dpStatusBar">
+      <span class="dp-status-icon" id="dpStatusIcon"></span>
+      <span class="dp-status-text" id="dpStatusText"></span>
+      <span class="dp-dias" id="dpDias"></span>
+    </div>
+    <div class="dp-body">
+      <div class="dp-field"><label>Setor / Local</label><input type="text" id="editSetor" placeholder="Ex: Porta Lateral, Corredor B..."></div>
+      <div class="dp-field"><label>Tipo do Extintor</label>
+        <select id="editTipo">
+          <option>Pó Químico ABC</option><option>CO₂</option><option>Água</option><option>Espuma</option><option>Halotron</option>
+        </select>
+      </div>
+      <div class="dp-field"><label>Data de Validade</label><input type="date" id="editValidade"></div>
+      <div class="dp-actions">
+        <button class="dp-btn primary" onclick="salvarEdicao()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+          Salvar Alterações
+        </button>
+        <button class="dp-btn secondary" onclick="trocarValidade()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+          Registrar Recarga
+        </button>
+        <button class="dp-btn danger" onclick="removerExtintor()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+          Remover
+        </button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="script.js"></script>
+</body>
+</html>
