@@ -138,15 +138,15 @@ function renderizarAbas() {
     const ativo  = gid === galpaoAtivo ? "active" : "";
     const qtd    = Object.keys(dados[gid] || {}).length;
     return `
-      <button class="tab ${ativo}" onclick="trocarGalpao('${gid}')">
+      <div class="tab ${ativo}" onclick="trocarGalpao('${gid}')">
         <span class="tab-dot ${status}"></span>
         <span class="tab-nome">${g.nome}</span>
         <span style="font-size:10px;color:var(--text3);font-weight:500">${qtd}</span>
-        <button class="tab-action" onclick="abrirRenomearGalpao(event,'${gid}')" title="Renomear galpão">
+        <span class="tab-action" onclick="abrirRenomearGalpao(event,'${gid}')" title="Renomear galpão">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-        </button>
-        <button class="tab-close" onclick="pedirExcluirGalpao(event,'${gid}')" title="Excluir galpão">✕</button>
-      </button>`;
+        </span>
+        <span class="tab-close" onclick="pedirExcluirGalpao(event,'${gid}')" title="Excluir galpão">✕</span>
+      </div>`;
   }).join("");
 }
 
