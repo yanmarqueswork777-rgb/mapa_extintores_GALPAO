@@ -1,5 +1,29 @@
 /* ============================================================
-   FireMap — script.js  (multi-galpão)
+   FireMap — script.js  (multi-galpão) — OTIMIZADO
+   ============================================================
+   OTIMIZAÇÕES APLICADAS:
+   ─ EL{}  : cache de todos os elementos fixos do DOM (evita
+             getElementById repetido — ~30+ lookups por ação)
+   ─ getHoje() : Date do dia cacheada por 60s (antes: new Date()
+                 era criado a cada chamada de calcularStatus/
+                 diasRestantes — 4× por extintor no render)
+   ─ calcularDias() : função-raiz única; calcularStatus e
+                      diasRestantes derivam dela sem re-parsear
+   ─ atualizarAbaStatus(gid) : atualiza dot + contador de UMA
+                aba sem reconstruir todo o innerHTML das tabs
+   ─ trocarGalpao() : troca só a classe "active" em vez de
+                      full rebuild das abas
+   ─ _atualizarPainelStatus() : atualiza barra de status do
+                painel in-place (antes: abrirPainel() completo)
+   ─ salvarEdicao / trocarValidade / removerExtintor usam os
+     dois pontos acima — eliminando um full rebuild por ação
+   ─ validarIdDebounce() : 80ms de debounce no oninput
+   ─ renderizarPontos() : limpa só o mapa ativo, não todos
+   ─ renderizarLista() : usa calcularDias() uma vez por card
+   ─ statusGalpao() : for…of com break antecipado no vermelho
+   ─ confirmarNovoGalpao() : sem double render
+   ─ renderPonto() : usa calcularDias() uma vez
+   ─ atualizarPonto() : usa calcularDias() uma vez
    ============================================================ */
 
 /* ── ESTRUTURA DE DADOS ──
@@ -8,7 +32,6 @@
    posicoes: { galpaoId: { extId: { top, left } } }
    ─────────────────────────────────────────────────────────── */
 
-// Dados padrão usados APENAS na primeira execução (localStorage vazio)
 const DADOS_PADRAO = {
   galpoes:  { "A": { nome: "Galpão A", imagem: "imagens/galpaoA.png", fundo: "escuro" } },
   dados:    { "A": { "1": { tipo: "Pó Químico ABC", validade: "2026-05-10", setor: "Porta Principal" }, "2": { tipo: "CO₂", validade: "2026-03-25", setor: "Corredor B" } } },
@@ -19,27 +42,54 @@ let galpoes  = {};
 let dados    = {};
 let posicoes = {};
 
-let galpaoAtivo  = "A";
-let modoAtual    = null;   // null | "mover" | "colocar"
-let idAtivo      = null;
-let viewAtual    = "mapa";
-let pz           = null;
-let pinFantasma  = null;
+let galpaoAtivo       = "A";
+let modoAtual         = null;   // null | "mover" | "colocar"
+let idAtivo           = null;
+let viewAtual         = "mapa";
+let pz                = null;
+let pinFantasma       = null;
 let novoExtintorDados = null;
+
+/* ── DOM CACHE ──────────────────────────────────────────────
+   Todas as referências fixas ficam aqui após _cacheEls().
+   Chama document.getElementById UMA vez por elemento,
+   independente de quantas vezes a função que usa for chamada. */
+const EL = {};
+function _cacheEls() {
+  const ids = [
+    'mapa','mapaImg','mapaContainer',
+    'viewMapa','viewLista','viewTitle','viewSub',
+    'tabsList',
+    'statsLabel','statTotal','statOk','statWarn','statExp',
+    'btnEdicao','modoEdBadge','modoEdBadgeTexto',
+    'detailPanel',
+    'dpId','dpNome','dpStatusBar','dpStatusIcon','dpStatusText','dpDias',
+    'editSetor','editTipo','editValidade',
+    'novoId','idFeedback','btnConfirmarCadastro',
+    'novoSetor','novoTipo','novaValidade',
+    'nomeGalpao','imagemGalpao',
+    'modalEdicao','modalCadastro','modalGalpao','modalExcluirGalpao','modalRenomear',
+    'textoExcluirGalpao','renomearGalpaoId','renomearGalpaoNome','renomearGalpaoImg',
+    'listaContainer','toast-container'
+  ];
+  ids.forEach(id => { EL[id] = document.getElementById(id); });
+  EL.toastContainer = EL['toast-container'];
+  EL.navItems       = document.querySelectorAll('.nav-item');
+  EL.idInputWrap    = EL.novoId.parentElement; // <div class="id-input-wrap">
+}
 
 /* Map de refs DOM por galpão: galpaoId → Map(extId → el) */
 const pontoElsPorGalpao = {};
-
 function getPontoEls() {
   if (!pontoElsPorGalpao[galpaoAtivo]) pontoElsPorGalpao[galpaoAtivo] = new Map();
   return pontoElsPorGalpao[galpaoAtivo];
 }
 
-/* ── PERSISTÊNCIA ── */
+/* ── PERSISTÊNCIA ───────────────────────────────────────── */
 let _saveTimer = null;
 function salvarStorage() {
   clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(() => _escreveStorage(), 400);
+  _saveTimer = setTimeout(_escreveStorage, 400);
 }
 function salvarStorageImediato() {
   clearTimeout(_saveTimer);
@@ -55,51 +105,57 @@ function carregarStorage() {
     const g = localStorage.getItem("fm_galpoes");
     const d = localStorage.getItem("fm_dados");
     const p = localStorage.getItem("fm_posicoes");
-
     if (g && d && p) {
-      // Dados existentes no localStorage
       galpoes  = JSON.parse(g);
       dados    = JSON.parse(d);
       posicoes = JSON.parse(p);
     } else {
-      // Primeira execução — usa dados de exemplo
       galpoes  = JSON.parse(JSON.stringify(DADOS_PADRAO.galpoes));
       dados    = JSON.parse(JSON.stringify(DADOS_PADRAO.dados));
       posicoes = JSON.parse(JSON.stringify(DADOS_PADRAO.posicoes));
     }
-
-    // Garante que o galpão ativo existe
     if (!galpoes[galpaoAtivo]) galpaoAtivo = Object.keys(galpoes)[0];
-
-    // Garante estrutura para CADA galpão (sem vazar dados entre eles)
-    // e migra galpões antigos que não tinham o campo "fundo"
     Object.keys(galpoes).forEach(gid => {
-      if (!dados[gid])    dados[gid]    = {};
-      if (!posicoes[gid]) posicoes[gid] = {};
-      if (!galpoes[gid].fundo) galpoes[gid].fundo = "escuro"; // migração
+      if (!dados[gid])         dados[gid]         = {};
+      if (!posicoes[gid])      posicoes[gid]       = {};
+      if (!galpoes[gid].fundo) galpoes[gid].fundo  = "escuro"; // migração
     });
   } catch(e) {
-    // Fallback seguro
     galpoes  = JSON.parse(JSON.stringify(DADOS_PADRAO.galpoes));
     dados    = JSON.parse(JSON.stringify(DADOS_PADRAO.dados));
     posicoes = JSON.parse(JSON.stringify(DADOS_PADRAO.posicoes));
   }
 }
 
-/* ── STATUS ── */
-function calcularStatus(val) {
-  if (!val) return "vermelho";
-  const hoje = new Date(); hoje.setHours(0,0,0,0);
-  const diff = Math.ceil((new Date(val + "T00:00:00") - hoje) / 86400000);
-  return diff < 0 ? "vermelho" : diff <= 30 ? "amarelo" : "verde";
+/* ── DATAS / STATUS ─────────────────────────────────────────
+   getHoje() cacheia o Date do dia atual por 60 s.
+   Antes, new Date() era criado em CADA chamada de
+   calcularStatus() e diasRestantes() — chegando a 200+
+   objetos num render de lista com 50 extintores.
+
+   calcularDias() é a função-raiz: parseia a string de
+   validade UMA vez e retorna o número de dias. As demais
+   funções derivam dela sem refazer o cálculo.            */
+let _hojeCache = null, _hojeTS = 0;
+function getHoje() {
+  const now = Date.now();
+  if (now - _hojeTS > 60_000) {
+    _hojeCache = new Date(); _hojeCache.setHours(0, 0, 0, 0);
+    _hojeTS = now;
+  }
+  return _hojeCache;
 }
-function diasRestantes(val) {
+function calcularDias(val) {
   if (!val) return -999;
-  const hoje = new Date(); hoje.setHours(0,0,0,0);
-  return Math.ceil((new Date(val + "T00:00:00") - hoje) / 86400000);
+  return Math.ceil((new Date(val + "T00:00:00") - getHoje()) / 86400000);
 }
+function calcularStatus(val) {
+  const d = calcularDias(val);
+  return (d === -999 || d < 0) ? "vermelho" : d <= 30 ? "amarelo" : "verde";
+}
+function diasRestantes(val) { return calcularDias(val); }
 function diasLabel(val) {
-  const d = diasRestantes(val);
+  const d = calcularDias(val);
   if (d === -999) return "Sem validade";
   if (d < 0)      return `${Math.abs(d)} dias vencido`;
   if (d === 0)    return "Vence hoje!";
@@ -108,18 +164,19 @@ function diasLabel(val) {
 function statusLabel(s) { return { verde:"Em dia", amarelo:"Vencendo em breve", vermelho:"Vencido" }[s]; }
 function statusIcon(s)  { return { verde:"✓", amarelo:"⚠", vermelho:"✕" }[s]; }
 
-/* ── STATUS GERAL DE UM GALPÃO (para o dot da aba) ── */
+/* statusGalpao: for…of com break antecipado — para assim
+   que encontra o primeiro vermelho, sem iterar o resto.   */
 function statusGalpao(gid) {
   const ext = dados[gid] || {};
   const ids = Object.keys(ext);
   if (!ids.length) return "neutro";
-  let temVermelho = false, temAmarelo = false;
-  ids.forEach(id => {
-    const s = calcularStatus(ext[id].validade);
-    if (s === "vermelho") temVermelho = true;
-    else if (s === "amarelo") temAmarelo = true;
-  });
-  return temVermelho ? "vermelho" : temAmarelo ? "amarelo" : "verde";
+  let temAmarelo = false;
+  for (const id of ids) {
+    const d = calcularDias(ext[id].validade);
+    if (d === -999 || d < 0) return "vermelho"; // sai imediatamente
+    if (d <= 30) temAmarelo = true;
+  }
+  return temAmarelo ? "amarelo" : "verde";
 }
 
 /* ── STATS ── */
@@ -127,34 +184,37 @@ function atualizarStats() {
   const ext = dados[galpaoAtivo] || {};
   const ids = Object.keys(ext);
   let ok = 0, warn = 0, exp = 0;
-  ids.forEach(id => {
-    const s = calcularStatus(ext[id].validade);
-    if (s === "verde") ok++;
-    else if (s === "amarelo") warn++;
-    else exp++;
-  });
-  document.getElementById("statTotal").textContent = ids.length;
-  document.getElementById("statOk").textContent    = ok;
-  document.getElementById("statWarn").textContent  = warn;
-  document.getElementById("statExp").textContent   = exp;
-  document.getElementById("statsLabel").textContent = galpoes[galpaoAtivo]?.nome || galpaoAtivo;
+  for (const id of ids) {
+    const d = calcularDias(ext[id].validade);
+    if (d === -999 || d < 0) exp++;
+    else if (d <= 30) warn++;
+    else ok++;
+  }
+  EL.statTotal.textContent  = ids.length;
+  EL.statOk.textContent     = ok;
+  EL.statWarn.textContent   = warn;
+  EL.statExp.textContent    = exp;
+  EL.statsLabel.textContent = galpoes[galpaoAtivo]?.nome || galpaoAtivo;
 }
 
 /* ════════════════════════════════════════
    ABAS DE GALPÃO
    ════════════════════════════════════════ */
+
+/* renderizarAbas: full rebuild — necessário apenas quando
+   a estrutura muda (criar / excluir / renomear galpão).
+   Adiciona data-gid e .tab-qtd para uso em atualizarAbaStatus. */
 function renderizarAbas() {
-  const list = document.getElementById("tabsList");
-  list.innerHTML = Object.keys(galpoes).map(gid => {
+  EL.tabsList.innerHTML = Object.keys(galpoes).map(gid => {
     const g      = galpoes[gid];
     const status = statusGalpao(gid);
     const ativo  = gid === galpaoAtivo ? "active" : "";
     const qtd    = Object.keys(dados[gid] || {}).length;
     return `
-      <div class="tab ${ativo}" onclick="trocarGalpao('${gid}')">
+      <div class="tab ${ativo}" data-gid="${gid}" onclick="trocarGalpao('${gid}')">
         <span class="tab-dot ${status}"></span>
         <span class="tab-nome">${g.nome}</span>
-        <span style="font-size:10px;color:var(--text3);font-weight:500">${qtd}</span>
+        <span class="tab-qtd" style="font-size:10px;color:var(--text3);font-weight:500">${qtd}</span>
         <span class="tab-action" onclick="abrirRenomearGalpao(event,'${gid}')" title="Renomear galpão">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
         </span>
@@ -163,17 +223,30 @@ function renderizarAbas() {
   }).join("");
 }
 
+/* atualizarAbaStatus: atualiza SOMENTE o dot e o contador
+   de uma aba específica via data-gid — sem destruir/recriar
+   o HTML de todas as abas. Substitui renderizarAbas() nas
+   operações rotineiras (salvar, remover, registrar recarga). */
+function atualizarAbaStatus(gid) {
+  const tab = EL.tabsList.querySelector(`.tab[data-gid="${gid}"]`);
+  if (!tab) { renderizarAbas(); return; } // fallback de segurança
+  tab.querySelector('.tab-dot').className = `tab-dot ${statusGalpao(gid)}`;
+  tab.querySelector('.tab-qtd').textContent = Object.keys(dados[gid] || {}).length;
+}
+
 function trocarGalpao(gid) {
   if (gid === galpaoAtivo) return;
   sairModoEdicaoSilencioso();
   fecharPainel();
+  // Troca só a classe "active" — sem reconstruir toda a lista de abas
+  EL.tabsList.querySelector(`.tab[data-gid="${galpaoAtivo}"]`)?.classList.remove('active');
+  EL.tabsList.querySelector(`.tab[data-gid="${gid}"]`)?.classList.add('active');
   galpaoAtivo = gid;
-  renderizarAbas();
   carregarMapa();
   renderizarPontos();
   atualizarStats();
   if (viewAtual === "lista") renderizarLista();
-  document.getElementById("viewSub").textContent = subtitleAtual();
+  EL.viewSub.textContent = subtitleAtual();
 }
 
 function subtitleAtual() {
@@ -185,46 +258,39 @@ function subtitleAtual() {
 
 /* ── CARREGAR IMAGEM DO MAPA ── */
 function carregarMapa() {
-  const img = document.getElementById("mapaImg");
   const src = galpoes[galpaoAtivo]?.imagem || "";
   if (src) {
-    img.src = src;
-    img.classList.remove("no-image");
-    img.onerror = () => { img.src = ""; img.classList.add("no-image"); };
+    EL.mapaImg.src = src;
+    EL.mapaImg.classList.remove("no-image");
+    EL.mapaImg.onerror = () => { EL.mapaImg.src = ""; EL.mapaImg.classList.add("no-image"); };
   } else {
-    img.src = "";
-    img.classList.add("no-image");
+    EL.mapaImg.src = "";
+    EL.mapaImg.classList.add("no-image");
   }
   if (pz) pz.reset();
-
-  // Aplica o fundo escolhido para este galpão
-  const fundo = galpoes[galpaoAtivo]?.fundo || "escuro";
-  document.getElementById("viewMapa").classList.toggle("fundo-claro", fundo === "claro");
+  EL.viewMapa.classList.toggle("fundo-claro", (galpoes[galpaoAtivo]?.fundo || "escuro") === "claro");
 }
 
 /* ════════════════════════════════════════
    GERENCIAR GALPÕES
    ════════════════════════════════════════ */
 function abrirModalGalpao() {
-  document.getElementById("nomeGalpao").value   = "";
-  document.getElementById("imagemGalpao").value = "";
-  // Reseta seleção de fundo para "escuro"
+  EL.nomeGalpao.value   = "";
+  EL.imagemGalpao.value = "";
   document.getElementById("fundoGalpaoEscuro").checked = true;
-  document.getElementById("modalGalpao").classList.remove("hidden");
-  setTimeout(() => document.getElementById("nomeGalpao").focus(), 100);
+  EL.modalGalpao.classList.remove("hidden");
+  setTimeout(() => EL.nomeGalpao.focus(), 100);
 }
-function fecharModalGalpao() {
-  document.getElementById("modalGalpao").classList.add("hidden");
-}
+function fecharModalGalpao() { EL.modalGalpao.classList.add("hidden"); }
+
 function confirmarNovoGalpao() {
-  const nome   = document.getElementById("nomeGalpao").value.trim();
-  const imagem = document.getElementById("imagemGalpao").value.trim();
+  const nome   = EL.nomeGalpao.value.trim();
+  const imagem = EL.imagemGalpao.value.trim();
   const fundo  = document.querySelector('input[name="fundoGalpao"]:checked')?.value || "escuro";
   if (!nome) { toast("Informe o nome do galpão!", "err"); return; }
 
-  // Gera um ID único: letra ou número não usado
   const ids = Object.keys(galpoes);
-  let novoId = String.fromCharCode(65 + ids.length); // A, B, C...
+  let novoId = String.fromCharCode(65 + ids.length);
   while (galpoes[novoId]) novoId += "_";
 
   galpoes[novoId]  = { nome, imagem: imagem || "", fundo };
@@ -233,8 +299,8 @@ function confirmarNovoGalpao() {
 
   fecharModalGalpao();
   salvarStorageImediato();
-  trocarGalpao(novoId);
-  renderizarAbas();
+  renderizarAbas();       // full rebuild (nova aba adicionada)
+  trocarGalpao(novoId);   // só troca classe active + carrega mapa
   toast(`${nome} criado!`, "ok");
 }
 
@@ -244,13 +310,13 @@ function pedirExcluirGalpao(e, gid) {
   _galpaoParaExcluir = gid;
   const nome = galpoes[gid]?.nome || gid;
   const qtd  = Object.keys(dados[gid] || {}).length;
-  document.getElementById("textoExcluirGalpao").innerHTML =
+  EL.textoExcluirGalpao.innerHTML =
     `Deseja excluir <strong>${nome}</strong>?` +
     (qtd > 0 ? `<br><br>Isso removerá também os <strong>${qtd} extintor${qtd > 1 ? "es" : ""}</strong> cadastrados nele.` : "");
-  document.getElementById("modalExcluirGalpao").classList.remove("hidden");
+  EL.modalExcluirGalpao.classList.remove("hidden");
 }
 function fecharModalExcluirGalpao() {
-  document.getElementById("modalExcluirGalpao").classList.add("hidden");
+  EL.modalExcluirGalpao.classList.add("hidden");
   _galpaoParaExcluir = null;
 }
 function confirmarExcluirGalpao() {
@@ -271,7 +337,7 @@ function confirmarExcluirGalpao() {
     galpaoAtivo = Object.keys(galpoes)[0];
     carregarMapa();
   }
-  renderizarAbas();
+  renderizarAbas(); // full rebuild (aba removida)
   renderizarPontos();
   atualizarStats();
   toast(`${nome} excluído`, "warn");
@@ -281,22 +347,22 @@ function confirmarExcluirGalpao() {
    PONTOS
    ════════════════════════════════════════ */
 function renderizarPontos() {
-  // Remove TODOS os pontos do DOM (não só os do Map, que pode estar vazio no novo galpão)
-  document.querySelectorAll("#mapa .ponto").forEach(el => el.remove());
-  // Limpa todos os Maps de referência (troca de galpão invalida tudo)
-  Object.keys(pontoElsPorGalpao).forEach(gid => pontoElsPorGalpao[gid].clear());
+  EL.mapa.querySelectorAll(".ponto").forEach(el => el.remove());
+  // Limpa APENAS o mapa ativo — não invalida cache de outros galpões
+  if (pontoElsPorGalpao[galpaoAtivo]) pontoElsPorGalpao[galpaoAtivo].clear();
   const ext = dados[galpaoAtivo] || {};
   Object.keys(ext).forEach(id => renderPonto(id));
   atualizarStats();
 }
 
 function renderPonto(id) {
-  const ext    = dados[galpaoAtivo]?.[id];
-  const pos    = posicoes[galpaoAtivo]?.[id];
+  const ext = dados[galpaoAtivo]?.[id];
+  const pos = posicoes[galpaoAtivo]?.[id];
   if (!ext || !pos) return;
-  const status = calcularStatus(ext.validade);
-  const dias   = diasRestantes(ext.validade);
-  const pontoEls = getPontoEls();
+
+  // Uma única chamada para dias; status derivado localmente
+  const dias   = calcularDias(ext.validade);
+  const status = (dias === -999 || dias < 0) ? "vermelho" : dias <= 30 ? "amarelo" : "verde";
 
   const div = document.createElement("div");
   div.id        = "p" + id;
@@ -313,23 +379,22 @@ function renderPonto(id) {
     e.stopPropagation();
     abrirPainel(id);
   });
-
   div.addEventListener("mousedown", e => {
     if (modoAtual !== "mover") return;
     e.stopPropagation(); e.preventDefault();
     iniciarDrag(div, id, e);
   });
 
-  document.getElementById("mapa").appendChild(div);
-  pontoEls.set(String(id), div);
+  EL.mapa.appendChild(div);
+  getPontoEls().set(String(id), div);
 }
 
 function atualizarPonto(id) {
   const el = getPontoEls().get(String(id));
   if (!el) return;
-  const ext    = dados[galpaoAtivo]?.[id];
-  const status = calcularStatus(ext?.validade);
-  const dias   = diasRestantes(ext?.validade);
+  const ext  = dados[galpaoAtivo]?.[id];
+  const dias = calcularDias(ext?.validade);
+  const status = (dias === -999 || dias < 0) ? "vermelho" : dias <= 30 ? "amarelo" : "verde";
   el.className = `ponto ${status}${idAtivo == id ? " selecionado" : ""}`;
   const tt = el.querySelector(".ttip");
   if (tt) tt.textContent = `#${id} — ${ext?.tipo} · ${dias < 0 ? "VENCIDO" : dias === 0 ? "Hoje!" : dias + "d"}`;
@@ -337,7 +402,7 @@ function atualizarPonto(id) {
 
 /* ── DRAG (RAF + cache rect) ── */
 function iniciarDrag(div, id, e) {
-  const rect = document.getElementById("mapa").getBoundingClientRect();
+  const rect = EL.mapa.getBoundingClientRect();
   const ox   = e.clientX - rect.left - parseFloat(div.style.left);
   const oy   = e.clientY - rect.top  - parseFloat(div.style.top);
   let pendX  = parseFloat(div.style.left), pendY = parseFloat(div.style.top);
@@ -366,37 +431,36 @@ function iniciarDrag(div, id, e) {
       toast("Posição salva", "ok");
     }
     document.removeEventListener("mousemove", onMove);
-    document.removeEventListener("mouseup", onUp);
+    document.removeEventListener("mouseup",   onUp);
   }
   document.addEventListener("mousemove", onMove);
-  document.addEventListener("mouseup", onUp);
+  document.addEventListener("mouseup",   onUp);
 }
 
-/* ── COLOCAR EXTINTOR ── */
+/* ── COLOCAR EXTINTOR ──
+   Listener registrado aqui (antes do _cacheEls) via getElementById
+   para não depender do EL ainda não inicializado.            */
 document.getElementById("mapa").addEventListener("click", e => {
   if (modoAtual !== "colocar" || !novoExtintorDados) return;
   if (e.target.closest(".ponto:not(.fantasma)")) return;
-  const rect = document.getElementById("mapa").getBoundingClientRect();
+  const rect = EL.mapa.getBoundingClientRect();
   const x    = Math.round(e.clientX - rect.left);
   const y    = Math.round(e.clientY - rect.top);
-
-  const id = novoExtintorDados.id;
+  const id   = novoExtintorDados.id;
   const { id: _k, ...rest } = novoExtintorDados;
   if (!dados[galpaoAtivo])    dados[galpaoAtivo]    = {};
   if (!posicoes[galpaoAtivo]) posicoes[galpaoAtivo] = {};
   dados[galpaoAtivo][id]    = rest;
   posicoes[galpaoAtivo][id] = { top: y + "px", left: x + "px" };
   novoExtintorDados = null;
-
   if (pinFantasma) { pinFantasma.remove(); pinFantasma = null; }
   salvarStorageImediato();
   renderPonto(id);
   atualizarStats();
-  renderizarAbas();
-
+  atualizarAbaStatus(galpaoAtivo);
   modoAtual = "mover";
-  document.getElementById("mapaContainer").classList.remove("modo-adicionar");
-  document.getElementById("modoEdBadgeTexto").textContent = "Modo mover — arraste os extintores";
+  EL.mapaContainer.classList.remove("modo-adicionar");
+  EL.modoEdBadgeTexto.textContent = "Modo mover — arraste os extintores";
   toast(`Extintor #${id} posicionado!`, "ok");
 });
 
@@ -405,13 +469,16 @@ function criarPinFantasma() {
   if (pinFantasma) pinFantasma.remove();
   pinFantasma = document.createElement("div");
   pinFantasma.className = "ponto fantasma verde";
-  Object.assign(pinFantasma.style, { zIndex:"100", pointerEvents:"none", position:"absolute", display:"none", willChange:"left,top" });
-  document.getElementById("mapa").appendChild(pinFantasma);
+  Object.assign(pinFantasma.style, {
+    zIndex: "100", pointerEvents: "none", position: "absolute",
+    display: "none", willChange: "left,top"
+  });
+  EL.mapa.appendChild(pinFantasma);
 }
 let _pinRaf = null;
 document.getElementById("mapaContainer").addEventListener("mousemove", e => {
   if (modoAtual !== "colocar" || !pinFantasma) return;
-  const rect = document.getElementById("mapa").getBoundingClientRect();
+  const rect = EL.mapa.getBoundingClientRect();
   const x = e.clientX - rect.left, y = e.clientY - rect.top;
   if (!_pinRaf) _pinRaf = requestAnimationFrame(() => {
     pinFantasma.style.display = "block";
@@ -423,35 +490,34 @@ document.getElementById("mapaContainer").addEventListener("mousemove", e => {
 document.getElementById("mapaContainer").addEventListener("mouseleave", () => {
   if (pinFantasma) pinFantasma.style.display = "none";
 });
+document.getElementById("mapaContainer").addEventListener("wheel", e => { if (pz) pz.zoomWithWheel(e); });
 
 /* ════════════════════════════════════════
    MODO EDIÇÃO
    ════════════════════════════════════════ */
 function toggleEdicao() {
   if (modoAtual) { sairModoEdicao(); return; }
-  document.getElementById("modalEdicao").classList.remove("hidden");
+  EL.modalEdicao.classList.remove("hidden");
 }
-function fecharModalEdicao() {
-  document.getElementById("modalEdicao").classList.add("hidden");
-}
+function fecharModalEdicao() { EL.modalEdicao.classList.add("hidden"); }
+
 function entrarModoMover() {
   fecharModalEdicao();
   modoAtual = "mover";
   destruirPanzoom();
-  document.getElementById("btnEdicao").classList.add("ativo");
-  document.getElementById("modoEdBadge").classList.remove("hidden");
-  document.getElementById("modoEdBadgeTexto").textContent = "Modo mover — arraste os extintores";
+  EL.btnEdicao.classList.add("ativo");
+  EL.modoEdBadge.classList.remove("hidden");
+  EL.modoEdBadgeTexto.textContent = "Modo mover — arraste os extintores";
   fecharPainel();
   toast("Modo mover ativo", "warn");
 }
 function entrarModoCriar() {
   fecharModalEdicao();
   const sugestao = proximoIdDisponivel();
-  const input    = document.getElementById("novoId");
-  input.value    = sugestao;
+  EL.novoId.value = sugestao;
   validarId(sugestao);
-  document.getElementById("modalCadastro").classList.remove("hidden");
-  setTimeout(() => input.focus(), 100);
+  EL.modalCadastro.classList.remove("hidden");
+  setTimeout(() => EL.novoId.focus(), 100);
 }
 function sairModoEdicao() {
   sairModoEdicaoSilencioso();
@@ -462,9 +528,9 @@ function sairModoEdicaoSilencioso() {
   novoExtintorDados = null;
   if (pinFantasma) { pinFantasma.remove(); pinFantasma = null; }
   criarPanzoom();
-  document.getElementById("btnEdicao").classList.remove("ativo");
-  document.getElementById("modoEdBadge").classList.add("hidden");
-  document.getElementById("mapaContainer").classList.remove("modo-adicionar");
+  EL.btnEdicao.classList.remove("ativo");
+  EL.modoEdBadge.classList.add("hidden");
+  EL.mapaContainer.classList.remove("modo-adicionar");
 }
 
 /* ── ID CUSTOMIZADO ── */
@@ -477,55 +543,69 @@ function proximoIdDisponivel() {
 function idJaExiste(val) {
   return Object.keys(dados[galpaoAtivo] || {}).includes(String(val).trim());
 }
+
+/* validarIdDebounce: 80ms de debounce no oninput.
+   Antes, validarId() era chamado a cada tecla com 3 getElementById
+   + classList mutations. Com debounce, só dispara quando o usuário
+   pausa de digitar, eliminando travadas em IDs longos.         */
+let _validarTimer = null;
+function validarIdDebounce(val) {
+  clearTimeout(_validarTimer);
+  _validarTimer = setTimeout(() => validarId(val), 80);
+}
 function validarId(val) {
-  const wrap = document.getElementById("novoId").parentElement;
-  const fb   = document.getElementById("idFeedback");
-  const btn  = document.getElementById("btnConfirmarCadastro");
-  const v    = val.trim();
-  if (!v) { wrap.classList.remove("id-ok","id-erro"); fb.textContent = ""; fb.className = "id-feedback"; btn.disabled = false; return; }
+  const v = val.trim();
+  if (!v) {
+    EL.idInputWrap.classList.remove("id-ok", "id-erro");
+    EL.idFeedback.textContent = ""; EL.idFeedback.className = "id-feedback";
+    EL.btnConfirmarCadastro.disabled = false;
+    return;
+  }
   if (idJaExiste(v)) {
-    wrap.classList.add("id-erro"); wrap.classList.remove("id-ok");
-    fb.textContent = `#${v} já existe neste galpão`; fb.className = "id-feedback erro"; btn.disabled = true;
+    EL.idInputWrap.classList.remove("id-ok"); EL.idInputWrap.classList.add("id-erro");
+    EL.idFeedback.textContent = `#${v} já existe neste galpão`;
+    EL.idFeedback.className   = "id-feedback erro";
+    EL.btnConfirmarCadastro.disabled = true;
   } else {
-    wrap.classList.add("id-ok"); wrap.classList.remove("id-erro");
-    fb.textContent = `#${v} disponível`; fb.className = "id-feedback ok"; btn.disabled = false;
+    EL.idInputWrap.classList.remove("id-erro"); EL.idInputWrap.classList.add("id-ok");
+    EL.idFeedback.textContent = `#${v} disponível`;
+    EL.idFeedback.className   = "id-feedback ok";
+    EL.btnConfirmarCadastro.disabled = false;
   }
 }
 function usarProximoId() {
   const s = proximoIdDisponivel();
-  document.getElementById("novoId").value = s;
-  validarId(s);
-  document.getElementById("novoId").focus();
+  EL.novoId.value = s;
+  validarId(s); // imediato — ação de botão, não digitação
+  EL.novoId.focus();
 }
 function confirmarCadastro() {
-  const idRaw    = document.getElementById("novoId").value.trim();
-  const tipo     = document.getElementById("novoTipo").value;
-  const validade = document.getElementById("novaValidade").value;
-  const setor    = document.getElementById("novoSetor").value.trim();
-  if (!idRaw)    { toast("Informe a identificação!", "err"); return; }
-  if (!validade) { toast("Informe a validade!", "err"); return; }
+  const idRaw    = EL.novoId.value.trim();
+  const tipo     = EL.novoTipo.value;
+  const validade = EL.novaValidade.value;
+  const setor    = EL.novoSetor.value.trim();
+  if (!idRaw)        { toast("Informe a identificação!", "err"); return; }
+  if (!validade)     { toast("Informe a validade!", "err"); return; }
   if (idJaExiste(idRaw)) { toast(`#${idRaw} já existe!`, "err"); return; }
 
   novoExtintorDados = { id: idRaw, tipo, validade, setor: setor || galpoes[galpaoAtivo]?.nome || "Galpão" };
-  document.getElementById("modalCadastro").classList.add("hidden");
-  document.getElementById("novoId").value       = "";
-  document.getElementById("novoSetor").value    = "";
-  document.getElementById("novaValidade").value = "";
-  document.getElementById("idFeedback").textContent = "";
-  document.getElementById("novoId").parentElement.classList.remove("id-ok","id-erro");
-  document.getElementById("btnConfirmarCadastro").disabled = false;
+  EL.modalCadastro.classList.add("hidden");
+  EL.novoId.value = ""; EL.novoSetor.value = ""; EL.novaValidade.value = "";
+  EL.idFeedback.textContent = "";
+  EL.idInputWrap.classList.remove("id-ok", "id-erro");
+  EL.btnConfirmarCadastro.disabled = false;
 
   modoAtual = "colocar";
   destruirPanzoom();
-  document.getElementById("btnEdicao").classList.add("ativo");
-  document.getElementById("modoEdBadge").classList.remove("hidden");
-  document.getElementById("modoEdBadgeTexto").textContent = "Clique no mapa para posicionar";
-  document.getElementById("mapaContainer").classList.add("modo-adicionar");
+  EL.btnEdicao.classList.add("ativo");
+  EL.modoEdBadge.classList.remove("hidden");
+  EL.modoEdBadgeTexto.textContent = "Clique no mapa para posicionar";
+  EL.mapaContainer.classList.add("modo-adicionar");
   criarPinFantasma();
   toast("Clique no mapa para posicionar o extintor", "warn");
 }
 function cancelarCadastro() {
-  document.getElementById("modalCadastro").classList.add("hidden");
+  EL.modalCadastro.classList.add("hidden");
   novoExtintorDados = null;
 }
 
@@ -543,17 +623,16 @@ function abrirPainel(id) {
 
   const ext    = dados[galpaoAtivo]?.[id];
   const status = calcularStatus(ext?.validade);
-  document.getElementById("dpId").textContent  = `EXTINTOR #${id}`;
-  document.getElementById("dpNome").textContent = ext?.tipo || "—";
-  const bar = document.getElementById("dpStatusBar");
-  bar.className = `dp-status-bar s-${status}`;
-  document.getElementById("dpStatusIcon").textContent = statusIcon(status);
-  document.getElementById("dpStatusText").textContent = statusLabel(status);
-  document.getElementById("dpDias").textContent       = ext?.validade ? diasLabel(ext.validade) : "—";
-  document.getElementById("editSetor").value    = ext?.setor    || "";
-  document.getElementById("editTipo").value     = ext?.tipo     || "Pó Químico ABC";
-  document.getElementById("editValidade").value = ext?.validade || "";
-  document.getElementById("detailPanel").classList.remove("hidden");
+  EL.dpId.textContent         = `EXTINTOR #${id}`;
+  EL.dpNome.textContent       = ext?.tipo || "—";
+  EL.dpStatusBar.className    = `dp-status-bar s-${status}`;
+  EL.dpStatusIcon.textContent = statusIcon(status);
+  EL.dpStatusText.textContent = statusLabel(status);
+  EL.dpDias.textContent       = ext?.validade ? diasLabel(ext.validade) : "—";
+  EL.editSetor.value          = ext?.setor    || "";
+  EL.editTipo.value           = ext?.tipo     || "Pó Químico ABC";
+  EL.editValidade.value       = ext?.validade || "";
+  EL.detailPanel.classList.remove("hidden");
 }
 function fecharPainel() {
   if (idAtivo !== null) {
@@ -561,35 +640,56 @@ function fecharPainel() {
     if (el) el.classList.remove("selecionado");
   }
   idAtivo = null;
-  document.getElementById("detailPanel").classList.add("hidden");
+  EL.detailPanel.classList.add("hidden");
 }
+
+/* _atualizarPainelStatus: atualiza SOMENTE a barra de status
+   do painel aberto, sem re-renderizar o painel inteiro.
+   Antes, salvarEdicao() chamava abrirPainel() completo (7
+   getElementById + 7 atribuições + toggle de classe).       */
+function _atualizarPainelStatus() {
+  const ext = dados[galpaoAtivo]?.[idAtivo];
+  if (!ext) return;
+  const status = calcularStatus(ext.validade);
+  EL.dpNome.textContent       = ext.tipo || "—";
+  EL.dpStatusBar.className    = `dp-status-bar s-${status}`;
+  EL.dpStatusIcon.textContent = statusIcon(status);
+  EL.dpStatusText.textContent = statusLabel(status);
+  EL.dpDias.textContent       = ext.validade ? diasLabel(ext.validade) : "—";
+}
+
 function salvarEdicao() {
   if (!idAtivo) return;
-  const val = document.getElementById("editValidade").value;
+  const val = EL.editValidade.value;
   if (!val) { toast("Informe a validade!", "err"); return; }
-  dados[galpaoAtivo][idAtivo].tipo     = document.getElementById("editTipo").value;
-  dados[galpaoAtivo][idAtivo].validade = val;
-  dados[galpaoAtivo][idAtivo].setor    = document.getElementById("editSetor").value.trim() || dados[galpaoAtivo][idAtivo].setor;
+  const ext    = dados[galpaoAtivo][idAtivo];
+  ext.tipo     = EL.editTipo.value;
+  ext.validade = val;
+  ext.setor    = EL.editSetor.value.trim() || ext.setor;
   salvarStorageImediato();
   atualizarPonto(idAtivo);
   atualizarStats();
-  renderizarAbas();
-  abrirPainel(idAtivo);
+  atualizarAbaStatus(galpaoAtivo);  // antes: renderizarAbas() full rebuild
+  _atualizarPainelStatus();         // antes: abrirPainel() full re-render
   if (viewAtual === "lista") renderizarLista();
   toast("Extintor atualizado!", "ok");
 }
+
 function trocarValidade() {
   if (!idAtivo) return;
-  const nova = new Date(); nova.setFullYear(nova.getFullYear() + 1);
-  dados[galpaoAtivo][idAtivo].validade = nova.toISOString().split("T")[0];
+  const nova    = new Date(); nova.setFullYear(nova.getFullYear() + 1);
+  const novaVal = nova.toISOString().split("T")[0];
+  dados[galpaoAtivo][idAtivo].validade = novaVal;
+  EL.editValidade.value = novaVal; // mantém o campo sincronizado
   salvarStorageImediato();
   atualizarPonto(idAtivo);
   atualizarStats();
-  renderizarAbas();
-  abrirPainel(idAtivo);
+  atualizarAbaStatus(galpaoAtivo);
+  _atualizarPainelStatus();
   if (viewAtual === "lista") renderizarLista();
   toast("Recarga registrada! Válido por mais 1 ano.", "ok");
 }
+
 function removerExtintor() {
   if (!idAtivo) return;
   if (!confirm(`Remover o Extintor #${idAtivo} de ${galpoes[galpaoAtivo]?.nome}?`)) return;
@@ -602,7 +702,7 @@ function removerExtintor() {
   delete posicoes[galpaoAtivo][id];
   salvarStorageImediato();
   atualizarStats();
-  renderizarAbas();
+  atualizarAbaStatus(galpaoAtivo); // antes: renderizarAbas() full rebuild
   if (viewAtual === "lista") renderizarLista();
   toast(`Extintor #${id} removido`, "warn");
 }
@@ -612,12 +712,12 @@ function removerExtintor() {
    ════════════════════════════════════════ */
 function setView(v) {
   viewAtual = v;
-  document.getElementById("viewMapa").classList.toggle("hidden",  v !== "mapa");
-  document.getElementById("viewLista").classList.toggle("hidden", v !== "lista");
-  document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
+  EL.viewMapa.classList.toggle("hidden",  v !== "mapa");
+  EL.viewLista.classList.toggle("hidden", v !== "lista");
+  EL.navItems.forEach(n => n.classList.remove("active"));
   event?.currentTarget?.classList.add("active");
-  document.getElementById("viewTitle").textContent = v === "mapa" ? "Mapa de Extintores" : "Lista de Extintores";
-  document.getElementById("viewSub").textContent   = subtitleAtual();
+  EL.viewTitle.textContent = v === "mapa" ? "Mapa de Extintores" : "Lista de Extintores";
+  EL.viewSub.textContent   = subtitleAtual();
   if (v === "lista") renderizarLista();
 }
 
@@ -628,18 +728,27 @@ function filtrarLista(v) {
 }
 
 function renderizarLista(filtro = "") {
-  const c   = document.getElementById("listaContainer");
   const ext = dados[galpaoAtivo] || {};
-  const ids = Object.keys(ext).filter(id => {
-    if (!filtro) return true;
+  let ids = Object.keys(ext);
+  if (filtro) {
     const f = filtro.toLowerCase();
-    return String(id).includes(f) || ext[id].tipo.toLowerCase().includes(f) || ext[id].setor.toLowerCase().includes(f);
-  });
-  if (!ids.length) { c.innerHTML = `<div style="color:var(--text3);font-size:14px;padding:20px">Nenhum extintor encontrado.</div>`; return; }
-  c.innerHTML = ids.sort((a,b)=>isNaN(a)||isNaN(b)?a.localeCompare(b):+a-+b).map(id => {
-    const e = ext[id]; const status = calcularStatus(e.validade);
-    const d = e.validade ? diasRestantes(e.validade) : null;
-    const dTx = d===null?"—":d<0?`${Math.abs(d)}d vencido`:d===0?"Hoje!":`${d}d`;
+    ids = ids.filter(id =>
+      String(id).includes(f) ||
+      ext[id].tipo.toLowerCase().includes(f) ||
+      ext[id].setor.toLowerCase().includes(f)
+    );
+  }
+  if (!ids.length) {
+    EL.listaContainer.innerHTML = `<div style="color:var(--text3);font-size:14px;padding:20px">Nenhum extintor encontrado.</div>`;
+    return;
+  }
+  ids.sort((a, b) => isNaN(a) || isNaN(b) ? a.localeCompare(b) : +a - +b);
+  // calcularDias() chamado UMA vez por card (antes: calcularStatus + diasRestantes = 2×)
+  EL.listaContainer.innerHTML = ids.map(id => {
+    const e      = ext[id];
+    const dias   = calcularDias(e.validade);
+    const status = (dias === -999 || dias < 0) ? "vermelho" : dias <= 30 ? "amarelo" : "verde";
+    const dTx    = dias === -999 ? "—" : dias < 0 ? `${Math.abs(dias)}d vencido` : dias === 0 ? "Hoje!" : `${dias}d`;
     return `<div class="lista-card ${status}" onclick="abrirPainelLista('${id}')">
       <div class="lc-header"><span class="lc-id">#${id}</span><span class="lc-badge ${status}">${statusLabel(status)}</span></div>
       <div class="lc-tipo">${e.tipo}</div><div class="lc-setor">${e.setor}</div>
@@ -648,10 +757,11 @@ function renderizarLista(filtro = "") {
     </div>`;
   }).join("");
 }
+
 function abrirPainelLista(id) {
   setView("mapa");
-  document.querySelectorAll(".nav-item")[0].classList.add("active");
-  document.querySelectorAll(".nav-item")[1].classList.remove("active");
+  EL.navItems[0].classList.add("active");
+  EL.navItems[1].classList.remove("active");
   setTimeout(() => abrirPainel(id), 50);
 }
 
@@ -664,14 +774,12 @@ function criarPanzoom() {
 }
 function destruirPanzoom() { if (!pz) return; pz.destroy(); pz = null; }
 function resetZoom() { if (pz) pz.reset(); }
-document.getElementById("mapaContainer").addEventListener("wheel", e => { if (pz) pz.zoomWithWheel(e); });
 
 /* ── TOAST ── */
 function toast(msg, tipo = "") {
-  const c = document.getElementById("toast-container");
   const el = document.createElement("div");
   el.className = `toast ${tipo}`; el.textContent = msg;
-  c.appendChild(el);
+  EL.toastContainer.appendChild(el);
   setTimeout(() => { el.classList.add("fade-out"); setTimeout(() => el.remove(), 350); }, 3000);
 }
 
@@ -685,9 +793,11 @@ function exportarRelatorio() {
     const ids = Object.keys(ext);
     if (!ids.length) { txt += "  Nenhum extintor cadastrado.\n\n"; return; }
     ids.sort((a,b)=>isNaN(a)||isNaN(b)?a.localeCompare(b):+a-+b).forEach(id => {
-      const e = ext[id]; const s = calcularStatus(e.validade); const d = diasRestantes(e.validade);
+      const e  = ext[id];
+      const d  = calcularDias(e.validade);
+      const s  = (d === -999 || d < 0) ? "vermelho" : d <= 30 ? "amarelo" : "verde";
       const sx = s==="verde"?"✓ EM DIA":s==="amarelo"?"⚠ VENCENDO":"✕ VENCIDO";
-      const dTx = d>=0?`${d}d restantes`:`${Math.abs(d)}d vencido`;
+      const dTx= d >= 0 ? `${d}d restantes` : `${Math.abs(d)}d vencido`;
       txt += `  #${String(id).padStart(3,"0")} | ${e.tipo.padEnd(18)} | ${e.setor.padEnd(18)} | Val: ${e.validade||"—"} | ${sx} (${dTx})\n`;
     });
     txt += "\n";
@@ -704,28 +814,20 @@ function exportarRelatorio() {
    ════════════════════════════════════════ */
 function abrirRenomearGalpao(e, gid) {
   e.stopPropagation();
-  const nome = galpoes[gid]?.nome || "";
   const fundo = galpoes[gid]?.fundo || "escuro";
-  document.getElementById("renomearGalpaoId").value    = gid;
-  document.getElementById("renomearGalpaoNome").value  = nome;
-  document.getElementById("renomearGalpaoImg").value   = galpoes[gid]?.imagem || "";
-  // Seleciona o radio correto
-  const radioId = fundo === "claro" ? "renomearFundoClaro" : "renomearFundoEscuro";
-  document.getElementById(radioId).checked = true;
-  document.getElementById("modalRenomear").classList.remove("hidden");
-  setTimeout(() => {
-    const input = document.getElementById("renomearGalpaoNome");
-    input.focus();
-    input.select();
-  }, 100);
+  EL.renomearGalpaoId.value   = gid;
+  EL.renomearGalpaoNome.value = galpoes[gid]?.nome   || "";
+  EL.renomearGalpaoImg.value  = galpoes[gid]?.imagem || "";
+  document.getElementById(fundo === "claro" ? "renomearFundoClaro" : "renomearFundoEscuro").checked = true;
+  EL.modalRenomear.classList.remove("hidden");
+  setTimeout(() => { EL.renomearGalpaoNome.focus(); EL.renomearGalpaoNome.select(); }, 100);
 }
-function fecharModalRenomear() {
-  document.getElementById("modalRenomear").classList.add("hidden");
-}
+function fecharModalRenomear() { EL.modalRenomear.classList.add("hidden"); }
+
 function confirmarRenomear() {
-  const gid    = document.getElementById("renomearGalpaoId").value;
-  const nome   = document.getElementById("renomearGalpaoNome").value.trim();
-  const imagem = document.getElementById("renomearGalpaoImg").value.trim();
+  const gid    = EL.renomearGalpaoId.value;
+  const nome   = EL.renomearGalpaoNome.value.trim();
+  const imagem = EL.renomearGalpaoImg.value.trim();
   const fundo  = document.querySelector('input[name="renomearFundo"]:checked')?.value || "escuro";
   if (!nome) { toast("Informe um nome!", "err"); return; }
   galpoes[gid].nome   = nome;
@@ -733,9 +835,8 @@ function confirmarRenomear() {
   galpoes[gid].fundo  = fundo;
   fecharModalRenomear();
   salvarStorageImediato();
-  // Se é o galpão ativo, recarrega a imagem e aplica o fundo
   if (gid === galpaoAtivo) carregarMapa();
-  renderizarAbas();
+  renderizarAbas(); // full rebuild (nome da aba mudou)
   atualizarStats();
   toast(`${nome} atualizado!`, "ok");
 }
@@ -744,8 +845,9 @@ function confirmarRenomear() {
    INIT
    ════════════════════════════════════════ */
 carregarStorage();
+_cacheEls();        // popula EL{} — deve rodar antes de qualquer função que usa EL
 criarPanzoom();
 renderizarAbas();
 carregarMapa();
 renderizarPontos();
-document.getElementById("viewSub").textContent = subtitleAtual();
+EL.viewSub.textContent = subtitleAtual();
