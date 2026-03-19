@@ -139,8 +139,8 @@ body { font-family:var(--font); background:var(--bg); color:var(--text); height:
 .ponto:hover { transform:translate(-50%,-50%) scale(1.35); border-color:rgba(255,255,255,.6); z-index:20; }
 .ponto.selecionado { transform:translate(-50%,-50%) scale(1.4); border-color:white; z-index:20; outline:3px solid rgba(255,255,255,.2); outline-offset:2px; }
 .verde    { background:var(--verde);    box-shadow:0 0 0 4px var(--verde-bg),  0 0 20px rgba(0,230,118,.3); }
-.amarelo  { background:var(--amarelo);  box-shadow:0 0 0 4px var(--amarelo-bg),0 0 20px rgba(255,202,40,.3); animation:pulso-y 2.5s ease-in-out infinite; }
-.vermelho { background:var(--vermelho); box-shadow:0 0 0 4px var(--vermelho-bg),0 0 20px rgba(255,61,61,.4);  animation:pulso-r 1.8s ease-in-out infinite; }
+.amarelo  { background:var(--amarelo);  box-shadow:0 0 0 4px var(--amarelo-bg),0 0 20px rgba(255,202,40,.3); animation:pulso-y 2.5s ease-in-out infinite; will-change:box-shadow; }
+.vermelho { background:var(--vermelho); box-shadow:0 0 0 4px var(--vermelho-bg),0 0 20px rgba(255,61,61,.4);  animation:pulso-r 1.8s ease-in-out infinite; will-change:box-shadow; }
 @keyframes pulso-y { 0%,100%{box-shadow:0 0 0 4px var(--amarelo-bg),0 0 16px rgba(255,202,40,.3)} 50%{box-shadow:0 0 0 8px var(--amarelo-bg),0 0 28px rgba(255,202,40,.5)} }
 @keyframes pulso-r { 0%,100%{box-shadow:0 0 0 4px var(--vermelho-bg),0 0 16px rgba(255,61,61,.4)} 50%{box-shadow:0 0 0 8px var(--vermelho-bg),0 0 32px rgba(255,61,61,.65)} }
 .ponto .ttip { position:absolute; bottom:calc(100% + 12px); left:50%; transform:translateX(-50%) translateY(4px) scale(var(--ttip-scale,1)); transform-origin:bottom center; background:rgba(13,15,22,.95); border:1px solid var(--border2); border-radius:var(--r-sm); padding:6px 10px; font-family:var(--mono); font-size:11px; white-space:nowrap; pointer-events:none; opacity:0; transition:opacity .15s,transform .15s; color:var(--text); }
@@ -206,7 +206,7 @@ body { font-family:var(--font); background:var(--bg); color:var(--text); height:
 .dp-btn.danger:hover { background:var(--vermelho-bg); }
 
 /* MODAIS */
-.modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); backdrop-filter:blur(4px); z-index:1000; display:flex; align-items:center; justify-content:center; animation:fadeIn .2s ease; }
+.modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:1000; display:flex; align-items:center; justify-content:center; animation:fadeIn .2s ease; }
 .modal-overlay.hidden { display:none; }
 @keyframes fadeIn { from{opacity:0} to{opacity:1} }
 .modal-box { background:var(--surface); border:1px solid var(--border2); border-radius:var(--r-xl); width:420px; max-width:calc(100vw - 40px); animation:slideUp .25s var(--ease); overflow:hidden; }
