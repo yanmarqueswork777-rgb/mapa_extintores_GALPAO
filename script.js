@@ -296,6 +296,25 @@ function applyViewerScale(newScale, pivotCX, pivotCY) {
     EL.mapaContainer.scrollLeft = Math.max(0, (scaledW - cW) / 2);
     EL.mapaContainer.scrollTop  = Math.max(0, (scaledH - cH) / 2);
   }
+
+  _atualizarTamanhosPontos();
+}
+
+/* ── TAMANHO ADAPTATIVO DOS PONTOS (Opção C) ──────────────────
+   Visual desejado na tela: clamp(26 * scale, 16, 48) px
+   Como o ponto vive dentro do #mapa que já está scale(viewerScale),
+   o tamanho DOM que produz esse visual é: visualSize / viewerScale  */
+const DOT_BASE = 26, DOT_MIN = 16, DOT_MAX = 48;
+function _dotDomSize() {
+  const vis = Math.max(DOT_MIN, Math.min(DOT_MAX, DOT_BASE * viewerScale));
+  return vis / viewerScale;
+}
+function _atualizarTamanhosPontos() {
+  const sz = _dotDomSize() + "px";
+  EL.mapa.querySelectorAll(".ponto").forEach(el => {
+    el.style.width  = sz;
+    el.style.height = sz;
+  });
 }
 
 /* fitViewer: calcula a escala que faz a imagem caber inteira
@@ -477,7 +496,8 @@ function renderPonto(id) {
   const div = document.createElement("div");
   div.id        = "p" + id;
   div.className = `ponto ${status}${idAtivo == id ? " selecionado" : ""}`;
-  div.style.cssText = `top:${pos.top}; left:${pos.left}; z-index:20;`;
+  const sz = _dotDomSize() + "px";
+  div.style.cssText = `top:${pos.top}; left:${pos.left}; z-index:20; width:${sz}; height:${sz};`;
 
   const tt = document.createElement("div");
   tt.className   = "ttip";
@@ -506,6 +526,9 @@ function atualizarPonto(id) {
   const dias   = calcularDias(ext?.validade);
   const status = (dias === -999 || dias < 0) ? "vermelho" : dias <= 30 ? "amarelo" : "verde";
   el.className = `ponto ${status}${idAtivo == id ? " selecionado" : ""}`;
+  const sz = _dotDomSize() + "px";
+  el.style.width  = sz;
+  el.style.height = sz;
   const tt = el.querySelector(".ttip");
   if (tt) tt.textContent = `#${id} — ${ext?.tipo} · ${dias < 0 ? "VENCIDO" : dias === 0 ? "Hoje!" : dias + "d"}`;
 }
