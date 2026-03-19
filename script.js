@@ -311,6 +311,9 @@ function _dotDomSize() {
 }
 function _atualizarTamanhosPontos() {
   const sz = _dotDomSize() + "px";
+  // Contra-scale do tooltip: cancela o scale do #mapa para o tooltip
+  // ficar sempre no tamanho original na tela
+  EL.mapa.style.setProperty("--ttip-scale", (1 / viewerScale).toFixed(4));
   EL.mapa.querySelectorAll(".ponto").forEach(el => {
     el.style.width  = sz;
     el.style.height = sz;
