@@ -222,8 +222,8 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 .vermelho { background:var(--vermelho); box-shadow:0 0 0 4px var(--vermelho-bg),0 0 20px rgba(255,61,61,0.4);   animation:pulso-r 1.8s ease-in-out infinite; }
 @keyframes pulso-y { 0%,100%{box-shadow:0 0 0 4px var(--amarelo-bg),0 0 16px rgba(255,202,40,0.3)} 50%{box-shadow:0 0 0 8px var(--amarelo-bg),0 0 28px rgba(255,202,40,0.5)} }
 @keyframes pulso-r { 0%,100%{box-shadow:0 0 0 4px var(--vermelho-bg),0 0 16px rgba(255,61,61,0.4)} 50%{box-shadow:0 0 0 8px var(--vermelho-bg),0 0 32px rgba(255,61,61,0.65)} }
-.ponto .ttip { position:absolute; bottom:calc(100% + 12px); left:50%; transform:translateX(-50%) translateY(4px); background:rgba(13,15,22,0.95); border:1px solid var(--border2); border-radius:var(--r-sm); padding:6px 10px; font-family:var(--mono); font-size:11px; white-space:nowrap; pointer-events:none; opacity:0; transition:opacity 0.15s,transform 0.15s; color:var(--text); }
-.ponto:hover .ttip { opacity:1; transform:translateX(-50%) translateY(0); }
+.ponto .ttip { position:absolute; bottom:calc(100% + 12px); left:50%; transform:translateX(-50%) translateY(4px) scale(var(--ttip-scale,1)); transform-origin:bottom center; background:rgba(13,15,22,0.95); border:1px solid var(--border2); border-radius:var(--r-sm); padding:6px 10px; font-family:var(--mono); font-size:11px; white-space:nowrap; pointer-events:none; opacity:0; transition:opacity 0.15s,transform 0.15s; color:var(--text); }
+.ponto:hover .ttip { opacity:1; transform:translateX(-50%) translateY(0) scale(var(--ttip-scale,1)); }
 .ponto.fantasma { opacity:0.65; animation:none !important; pointer-events:none; border-style:dashed; border-color:white; }
 
 /* ── LISTA ── */
