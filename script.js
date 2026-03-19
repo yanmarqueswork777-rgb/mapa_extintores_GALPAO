@@ -8,7 +8,7 @@
 const DADOS_PADRAO = {
   galpoes:  { "A": { nome:"Galpão A", imagem:"imagens/galpaoA.png", fundo:"escuro" } },
   dados:    { "A": { "1":{tipo:"Pó Químico ABC",validade:"2026-05-10",setor:"Porta Principal"}, "2":{tipo:"CO₂",validade:"2026-03-25",setor:"Corredor B"} } },
-  posicoes: { "A": { "1":{top:"100px",left:"200px"}, "2":{top:"250px",left:"400px"} } }
+  posicoes: { "A": { "1":{top:18.5,left:22.2}, "2":{top:46.3,left:44.4} } }
 };
 
 let galpoes = {}, dados = {}, posicoes = {};
@@ -319,6 +319,36 @@ function _dotDomSize() {
 function _ttipTexto(id, ext, dias) {
   return `#${id} — ${ext.tipo} · ${dias < 0 ? "VENCIDO" : dias === 0 ? "Hoje!" : dias + "d"}`;
 }
+
+/* Dimensões naturais da imagem (fallback seguro) */
+function _natDims() {
+  return {
+    w: EL.mapaImg.naturalWidth  || 900,
+    h: EL.mapaImg.naturalHeight || 540
+  };
+}
+
+/* Converte posição salva → px para o DOM.
+   Suporta formato novo (número = %) e legado (string "Xpx").
+   Migra legado automaticamente na primeira leitura. */
+function _posParaPx(pos, id) {
+  const { w, h } = _natDims();
+  if (typeof pos.top === "string") {
+    // legado: converte e salva como % para não migrar de novo
+    const t = parseFloat(pos.top) / h * 100;
+    const l = parseFloat(pos.left) / w * 100;
+    posicoes[galpaoAtivo][id] = { top: t, left: l };
+    salvarStorage(); // debounced — não trava
+    return { topPx: pos.top, leftPx: pos.left };
+  }
+  return { topPx: (pos.top / 100 * h) + "px", leftPx: (pos.left / 100 * w) + "px" };
+}
+
+/* Converte coordenadas px do DOM → % para salvar */
+function _pxParaPerc(xPx, yPx) {
+  const { w, h } = _natDims();
+  return { top: yPx / h * 100, left: xPx / w * 100 };
+}
 function _atualizarPontos() {
   const sz = _dotDomSize() + "px";
   EL.mapa.style.setProperty("--ttip-scale", (1 / viewerScale).toFixed(4));
@@ -338,11 +368,12 @@ function renderPonto(id) {
   if (!ext || !pos) return;
   const dias = calcularDias(ext.validade);
   const sz   = _dotDomSize() + "px";
+  const { topPx, leftPx } = _posParaPx(pos, id);
 
   const div = document.createElement("div");
   div.id        = "p" + id;
   div.className = `ponto ${diasToStatus(dias)}${idAtivo == id ? " selecionado" : ""}`;
-  div.style.cssText = `top:${pos.top};left:${pos.left};z-index:20;width:${sz};height:${sz}`;
+  div.style.cssText = `top:${topPx};left:${leftPx};z-index:20;width:${sz};height:${sz}`;
 
   const tt = document.createElement("div");
   tt.className   = "ttip";
@@ -388,7 +419,7 @@ function iniciarDrag(div, id, e) {
     if (raf) { cancelAnimationFrame(raf); raf = null; }
     div.style.willChange = ""; div.style.opacity = "1";
     document.body.style.userSelect = "";
-    if (moveu) { posicoes[galpaoAtivo][id] = { top: div.style.top, left: div.style.left }; salvarStorage(); toast("Posição salva", "ok"); }
+    if (moveu) { posicoes[galpaoAtivo][id] = _pxParaPerc(px, py); salvarStorage(); toast("Posição salva", "ok"); }
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", onUp);
   }
@@ -405,7 +436,7 @@ document.getElementById("mapa").addEventListener("click", e => {
   const y = Math.round((e.clientY - rect.top)  / viewerScale);
   const { id, ...rest } = novoExtintorDados;
   dados[galpaoAtivo][id]    = rest;
-  posicoes[galpaoAtivo][id] = { top: y+"px", left: x+"px" };
+  posicoes[galpaoAtivo][id] = _pxParaPerc(x, y);
   novoExtintorDados = null;
   if (pinFantasma) { pinFantasma.remove(); pinFantasma = null; }
   salvarStorageImediato();
