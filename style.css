@@ -241,10 +241,22 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 #mapaContainer:active { cursor: grabbing; }
 #mapaContainer.modo-adicionar { cursor: crosshair; }
 #mapa { position: relative; display: inline-block; transform-origin: 0 0; }
-#mapa img { display: block; max-width: none; user-select: none; pointer-events: none; min-width: 900px; min-height: 540px; }
+#mapa img {
+  display: block;
+  max-width: none;
+  user-select: none;
+  pointer-events: none;
+  min-width: 900px;
+  min-height: 540px;
+  /* Fundo branco para PNGs com transparência (plantas com linhas pretas) */
+  background: #ffffff;
+  /* Sombra suave para a imagem flutuar sobre o fundo escuro */
+  box-shadow: 0 8px 48px rgba(0, 0, 0, 0.55), 0 2px 12px rgba(0, 0, 0, 0.35);
+}
 #mapa img.no-image {
   background: repeating-linear-gradient(0deg,transparent,transparent 59px,rgba(255,255,255,0.04) 59px,rgba(255,255,255,0.04) 60px),
               repeating-linear-gradient(90deg,transparent,transparent 59px,rgba(255,255,255,0.04) 59px,rgba(255,255,255,0.04) 60px);
+  box-shadow: none;
 }
 
 /* ── PONTOS ── */
