@@ -3,14 +3,14 @@
    ============================================================ */
 
 /* ── ESTRUTURA DE DADOS ──
-   galpoes:  { id: { nome, imagem } }
+   galpoes:  { id: { nome, imagem, fundo } }
    dados:    { galpaoId: { extId: { tipo, validade, setor } } }
    posicoes: { galpaoId: { extId: { top, left } } }
    ─────────────────────────────────────────────────────────── */
 
 // Dados padrão usados APENAS na primeira execução (localStorage vazio)
 const DADOS_PADRAO = {
-  galpoes:  { "A": { nome: "Galpão A", imagem: "imagens/galpaoA.png" } },
+  galpoes:  { "A": { nome: "Galpão A", imagem: "imagens/galpaoA.png", fundo: "escuro" } },
   dados:    { "A": { "1": { tipo: "Pó Químico ABC", validade: "2026-05-10", setor: "Porta Principal" }, "2": { tipo: "CO₂", validade: "2026-03-25", setor: "Corredor B" } } },
   posicoes: { "A": { "1": { top: "100px", left: "200px" }, "2": { top: "250px", left: "400px" } } }
 };
@@ -72,9 +72,11 @@ function carregarStorage() {
     if (!galpoes[galpaoAtivo]) galpaoAtivo = Object.keys(galpoes)[0];
 
     // Garante estrutura para CADA galpão (sem vazar dados entre eles)
+    // e migra galpões antigos que não tinham o campo "fundo"
     Object.keys(galpoes).forEach(gid => {
       if (!dados[gid])    dados[gid]    = {};
       if (!posicoes[gid]) posicoes[gid] = {};
+      if (!galpoes[gid].fundo) galpoes[gid].fundo = "escuro"; // migração
     });
   } catch(e) {
     // Fallback seguro
@@ -194,6 +196,10 @@ function carregarMapa() {
     img.classList.add("no-image");
   }
   if (pz) pz.reset();
+
+  // Aplica o fundo escolhido para este galpão
+  const fundo = galpoes[galpaoAtivo]?.fundo || "escuro";
+  document.getElementById("viewMapa").classList.toggle("fundo-claro", fundo === "claro");
 }
 
 /* ════════════════════════════════════════
@@ -202,6 +208,8 @@ function carregarMapa() {
 function abrirModalGalpao() {
   document.getElementById("nomeGalpao").value   = "";
   document.getElementById("imagemGalpao").value = "";
+  // Reseta seleção de fundo para "escuro"
+  document.getElementById("fundoGalpaoEscuro").checked = true;
   document.getElementById("modalGalpao").classList.remove("hidden");
   setTimeout(() => document.getElementById("nomeGalpao").focus(), 100);
 }
@@ -211,6 +219,7 @@ function fecharModalGalpao() {
 function confirmarNovoGalpao() {
   const nome   = document.getElementById("nomeGalpao").value.trim();
   const imagem = document.getElementById("imagemGalpao").value.trim();
+  const fundo  = document.querySelector('input[name="fundoGalpao"]:checked')?.value || "escuro";
   if (!nome) { toast("Informe o nome do galpão!", "err"); return; }
 
   // Gera um ID único: letra ou número não usado
@@ -218,7 +227,7 @@ function confirmarNovoGalpao() {
   let novoId = String.fromCharCode(65 + ids.length); // A, B, C...
   while (galpoes[novoId]) novoId += "_";
 
-  galpoes[novoId]  = { nome, imagem: imagem || "" };
+  galpoes[novoId]  = { nome, imagem: imagem || "", fundo };
   dados[novoId]    = {};
   posicoes[novoId] = {};
 
@@ -696,9 +705,13 @@ function exportarRelatorio() {
 function abrirRenomearGalpao(e, gid) {
   e.stopPropagation();
   const nome = galpoes[gid]?.nome || "";
+  const fundo = galpoes[gid]?.fundo || "escuro";
   document.getElementById("renomearGalpaoId").value    = gid;
   document.getElementById("renomearGalpaoNome").value  = nome;
   document.getElementById("renomearGalpaoImg").value   = galpoes[gid]?.imagem || "";
+  // Seleciona o radio correto
+  const radioId = fundo === "claro" ? "renomearFundoClaro" : "renomearFundoEscuro";
+  document.getElementById(radioId).checked = true;
   document.getElementById("modalRenomear").classList.remove("hidden");
   setTimeout(() => {
     const input = document.getElementById("renomearGalpaoNome");
@@ -713,15 +726,17 @@ function confirmarRenomear() {
   const gid    = document.getElementById("renomearGalpaoId").value;
   const nome   = document.getElementById("renomearGalpaoNome").value.trim();
   const imagem = document.getElementById("renomearGalpaoImg").value.trim();
+  const fundo  = document.querySelector('input[name="renomearFundo"]:checked')?.value || "escuro";
   if (!nome) { toast("Informe um nome!", "err"); return; }
   galpoes[gid].nome   = nome;
   galpoes[gid].imagem = imagem;
+  galpoes[gid].fundo  = fundo;
   fecharModalRenomear();
   salvarStorageImediato();
-  // Se é o galpão ativo, recarrega a imagem caso tenha mudado
+  // Se é o galpão ativo, recarrega a imagem e aplica o fundo
   if (gid === galpaoAtivo) carregarMapa();
   renderizarAbas();
-  atualizarStats(); // atualiza o label do sidebar
+  atualizarStats();
   toast(`${nome} atualizado!`, "ok");
 }
 

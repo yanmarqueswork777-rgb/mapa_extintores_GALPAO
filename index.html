@@ -111,6 +111,25 @@
         <input type="text" id="imagemGalpao" placeholder="imagens/galpaoB.png">
         <span style="display:block;font-size:11px;color:var(--text3);margin-top:5px">Deixe vazio para usar fundo padrão com grade</span>
       </div>
+      <div class="mf-field">
+        <label>Fundo do Mapa</label>
+        <div class="fundo-selector">
+          <label class="fundo-option">
+            <input type="radio" name="fundoGalpao" id="fundoGalpaoEscuro" value="escuro" checked>
+            <span class="fundo-option-label">
+              <span class="fundo-preview preview-escuro"></span>
+              <span>Escuro<br>(grade preta)</span>
+            </span>
+          </label>
+          <label class="fundo-option">
+            <input type="radio" name="fundoGalpao" id="fundoGalpaoClaro" value="claro">
+            <span class="fundo-option-label">
+              <span class="fundo-preview preview-claro"></span>
+              <span>Claro<br>(planta branca)</span>
+            </span>
+          </label>
+        </div>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="mf-btn secondary" onclick="fecharModalGalpao()">Cancelar</button>
@@ -139,7 +158,7 @@
   </div>
 </div>
 
-<!-- ══ MODAL: RENOMEAR GALPÃO ══ -->
+<!-- ══ MODAL: RENOMEAR / EDITAR GALPÃO ══ -->
 <div id="modalRenomear" class="modal-overlay hidden" onclick="fecharModalRenomear()">
   <div class="modal-box modal-box-sm" onclick="event.stopPropagation()">
     <div class="modal-header">
@@ -156,6 +175,25 @@
         <label>Caminho da Imagem</label>
         <input type="text" id="renomearGalpaoImg" placeholder="imagens/galpaoB.png">
         <span style="display:block;font-size:11px;color:var(--text3);margin-top:5px">Deixe vazio para usar fundo com grade</span>
+      </div>
+      <div class="mf-field">
+        <label>Fundo do Mapa</label>
+        <div class="fundo-selector">
+          <label class="fundo-option">
+            <input type="radio" name="renomearFundo" id="renomearFundoEscuro" value="escuro" checked>
+            <span class="fundo-option-label">
+              <span class="fundo-preview preview-escuro"></span>
+              <span>Escuro<br>(grade preta)</span>
+            </span>
+          </label>
+          <label class="fundo-option">
+            <input type="radio" name="renomearFundo" id="renomearFundoClaro" value="claro">
+            <span class="fundo-option-label">
+              <span class="fundo-preview preview-claro"></span>
+              <span>Claro<br>(planta branca)</span>
+            </span>
+          </label>
+        </div>
       </div>
     </div>
     <div class="modal-footer">
