@@ -261,29 +261,34 @@ function carregarMapa() {
   const src = galpoes[galpaoAtivo]?.imagem || "";
   EL.viewMapa.classList.toggle("fundo-claro", (galpoes[galpaoAtivo]?.fundo || "escuro") === "claro");
 
-  // Limpa handlers anteriores antes de qualquer coisa
+  // Remove handlers antigos para não disparar duplo ao trocar de galpão
   EL.mapaImg.onload  = null;
   EL.mapaImg.onerror = null;
 
   if (src) {
     EL.mapaImg.classList.remove("no-image");
-    EL.mapaImg.onload  = () => fitMapa();
-    EL.mapaImg.onerror = () => {
-      EL.mapaImg.onerror = null;
-      EL.mapaImg.src = "";
-      EL.mapaImg.classList.add("no-image");
-      setTimeout(fitMapa, 50);
-    };
-    EL.mapaImg.src = src;
-    // Se já estava em cache e complete=true o onload não vai disparar de novo
-    if (EL.mapaImg.complete && EL.mapaImg.naturalWidth > 0) {
-      EL.mapaImg.onload = null;
-      fitMapa();
+
+    // Se a imagem já estava no cache do browser, complete=true e onload não dispara
+    if (EL.mapaImg.src === new URL(src, location.href).href && EL.mapaImg.complete && EL.mapaImg.naturalWidth > 0) {
+      requestAnimationFrame(() => requestAnimationFrame(fitMapa));
+    } else {
+      EL.mapaImg.onload = () => {
+        EL.mapaImg.onload = null;
+        requestAnimationFrame(() => requestAnimationFrame(fitMapa));
+      };
+      EL.mapaImg.onerror = () => {
+        EL.mapaImg.onerror = null;
+        EL.mapaImg.src = "";
+        EL.mapaImg.classList.add("no-image");
+        requestAnimationFrame(() => requestAnimationFrame(fitMapa));
+      };
+      EL.mapaImg.src = src;
     }
   } else {
     EL.mapaImg.src = "";
     EL.mapaImg.classList.add("no-image");
-    setTimeout(fitMapa, 50);
+    // Sem imagem: container flex precisa de um frame pra ter altura definida
+    requestAnimationFrame(() => requestAnimationFrame(fitMapa));
   }
 }
 
@@ -795,27 +800,31 @@ function criarPanzoom() {
 function destruirPanzoom() { if (!pz) return; pz.destroy(); pz = null; }
 function resetZoom()        { fitMapa(); }
 
-/* fitMapa — calcula a escala que faz a imagem caber inteira
-   no container com um padding confortável, e a centraliza.
-   Chamada no onload da imagem, na troca de galpão e no
-   botão "Resetar Zoom".                                     */
+/* fitMapa — calcula a escala "fit" e centraliza a imagem.
+   Só é chamada APÓS onload da imagem + requestAnimationFrame,
+   então as dimensões reais sempre estão disponíveis.        */
 function fitMapa() {
   if (!pz) return;
+
   const cW = EL.mapaContainer.clientWidth;
   const cH = EL.mapaContainer.clientHeight;
-  const iW = EL.mapaImg.naturalWidth  || EL.mapaImg.offsetWidth  || 900;
-  const iH = EL.mapaImg.naturalHeight || EL.mapaImg.offsetHeight || 540;
-  if (!cW || !cH || !iW || !iH) return;
+  if (cW < 10 || cH < 10) return; // container ainda sem dimensões, desiste
 
-  const PAD = 56; // px de respiro em cada lado
+  // Usa naturalWidth se disponível (imagem carregada), senão min-width do CSS
+  const iW = EL.mapaImg.naturalWidth  > 0 ? EL.mapaImg.naturalWidth  : 900;
+  const iH = EL.mapaImg.naturalHeight > 0 ? EL.mapaImg.naturalHeight : 540;
+
+  const PAD   = 48;
   const scale = Math.min((cW - PAD * 2) / iW, (cH - PAD * 2) / iH);
-  const s = Math.min(Math.max(scale, 0.05), 2); // clamp: não amplia além de 2× no fit
+  const sf    = Math.min(Math.max(scale, 0.05), 2); // nunca amplia além de 2× no fit
 
-  // pan: posição que centraliza a imagem escalada no container
-  const x = (cW - iW * s) / 2;
-  const y = (cH - iH * s) / 2;
+  // Com transform-origin: 0 0 e transform: translate(x,y) scale(s),
+  // um ponto (px, py) do elemento fica em (x + px*sf, y + py*sf) na tela.
+  // Para centralizar: x + iW*sf/2 = cW/2 → x = (cW - iW*sf) / 2
+  const x = (cW - iW * sf) / 2;
+  const y = (cH - iH * sf) / 2;
 
-  pz.zoom(s, { animate: false });
+  pz.zoom(sf, { animate: false });
   pz.pan(x, y, { animate: false });
 }
 
