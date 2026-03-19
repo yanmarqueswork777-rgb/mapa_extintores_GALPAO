@@ -1,29 +1,12 @@
 /* ============================================================
-   FireMap — script.js  (multi-galpão) — OTIMIZADO
+   FireMap — script.js  (multi-galpão)
    ============================================================
-   OTIMIZAÇÕES APLICADAS:
-   ─ EL{}  : cache de todos os elementos fixos do DOM (evita
-             getElementById repetido — ~30+ lookups por ação)
-   ─ getHoje() : Date do dia cacheada por 60s (antes: new Date()
-                 era criado a cada chamada de calcularStatus/
-                 diasRestantes — 4× por extintor no render)
-   ─ calcularDias() : função-raiz única; calcularStatus e
-                      diasRestantes derivam dela sem re-parsear
-   ─ atualizarAbaStatus(gid) : atualiza dot + contador de UMA
-                aba sem reconstruir todo o innerHTML das tabs
-   ─ trocarGalpao() : troca só a classe "active" em vez de
-                      full rebuild das abas
-   ─ _atualizarPainelStatus() : atualiza barra de status do
-                painel in-place (antes: abrirPainel() completo)
-   ─ salvarEdicao / trocarValidade / removerExtintor usam os
-     dois pontos acima — eliminando um full rebuild por ação
-   ─ validarIdDebounce() : 80ms de debounce no oninput
-   ─ renderizarPontos() : limpa só o mapa ativo, não todos
-   ─ renderizarLista() : usa calcularDias() uma vez por card
-   ─ statusGalpao() : for…of com break antecipado no vermelho
-   ─ confirmarNovoGalpao() : sem double render
-   ─ renderPonto() : usa calcularDias() uma vez
-   ─ atualizarPonto() : usa calcularDias() uma vez
+   VIEWER: overflow:auto + CSS transform scale
+   ─ Fit automático ao abrir: imagem inteira visível
+   ─ Pan limitado pelas bordas (scroll nativo do browser)
+   ─ Scroll wheel para zoom centrado no cursor
+   ─ Drag para pan (modifica scrollLeft/scrollTop)
+   ─ Coordenadas dos pontos sempre em espaço original da imagem
    ============================================================ */
 
 /* ── ESTRUTURA DE DADOS ──
@@ -34,8 +17,14 @@
 
 const DADOS_PADRAO = {
   galpoes:  { "A": { nome: "Galpão A", imagem: "imagens/galpaoA.png", fundo: "escuro" } },
-  dados:    { "A": { "1": { tipo: "Pó Químico ABC", validade: "2026-05-10", setor: "Porta Principal" }, "2": { tipo: "CO₂", validade: "2026-03-25", setor: "Corredor B" } } },
-  posicoes: { "A": { "1": { top: "100px", left: "200px" }, "2": { top: "250px", left: "400px" } } }
+  dados:    { "A": {
+    "1": { tipo: "Pó Químico ABC", validade: "2026-05-10", setor: "Porta Principal" },
+    "2": { tipo: "CO₂",           validade: "2026-03-25", setor: "Corredor B" }
+  }},
+  posicoes: { "A": {
+    "1": { top: "100px", left: "200px" },
+    "2": { top: "250px", left: "400px" }
+  }}
 };
 
 let galpoes  = {};
@@ -46,18 +35,19 @@ let galpaoAtivo       = "A";
 let modoAtual         = null;   // null | "mover" | "colocar"
 let idAtivo           = null;
 let viewAtual         = "mapa";
-let pz                = null;
 let pinFantasma       = null;
 let novoExtintorDados = null;
 
-/* ── DOM CACHE ──────────────────────────────────────────────
-   Todas as referências fixas ficam aqui após _cacheEls().
-   Chama document.getElementById UMA vez por elemento,
-   independente de quantas vezes a função que usa for chamada. */
+/* ── VIEWER STATE ─────────────────────────────────────────── */
+let viewerScale = 1;
+const VIEWER_MIN = 0.02;
+const VIEWER_MAX = 8;
+
+/* ── DOM CACHE ── */
 const EL = {};
 function _cacheEls() {
   const ids = [
-    'mapa','mapaImg','mapaContainer',
+    'mapa','mapaImg','mapaContainer','mapaScaler',
     'viewMapa','viewLista','viewTitle','viewSub',
     'tabsList',
     'statsLabel','statTotal','statOk','statWarn','statExp',
@@ -75,7 +65,7 @@ function _cacheEls() {
   ids.forEach(id => { EL[id] = document.getElementById(id); });
   EL.toastContainer = EL['toast-container'];
   EL.navItems       = document.querySelectorAll('.nav-item');
-  EL.idInputWrap    = EL.novoId.parentElement; // <div class="id-input-wrap">
+  EL.idInputWrap    = EL.novoId.parentElement;
 }
 
 /* Map de refs DOM por galpão: galpaoId → Map(extId → el) */
@@ -85,7 +75,7 @@ function getPontoEls() {
   return pontoElsPorGalpao[galpaoAtivo];
 }
 
-/* ── PERSISTÊNCIA ───────────────────────────────────────── */
+/* ── PERSISTÊNCIA ── */
 let _saveTimer = null;
 function salvarStorage() {
   clearTimeout(_saveTimer);
@@ -116,9 +106,9 @@ function carregarStorage() {
     }
     if (!galpoes[galpaoAtivo]) galpaoAtivo = Object.keys(galpoes)[0];
     Object.keys(galpoes).forEach(gid => {
-      if (!dados[gid])         dados[gid]         = {};
-      if (!posicoes[gid])      posicoes[gid]       = {};
-      if (!galpoes[gid].fundo) galpoes[gid].fundo  = "escuro"; // migração
+      if (!dados[gid])         dados[gid]        = {};
+      if (!posicoes[gid])      posicoes[gid]      = {};
+      if (!galpoes[gid].fundo) galpoes[gid].fundo = "escuro";
     });
   } catch(e) {
     galpoes  = JSON.parse(JSON.stringify(DADOS_PADRAO.galpoes));
@@ -127,15 +117,7 @@ function carregarStorage() {
   }
 }
 
-/* ── DATAS / STATUS ─────────────────────────────────────────
-   getHoje() cacheia o Date do dia atual por 60 s.
-   Antes, new Date() era criado em CADA chamada de
-   calcularStatus() e diasRestantes() — chegando a 200+
-   objetos num render de lista com 50 extintores.
-
-   calcularDias() é a função-raiz: parseia a string de
-   validade UMA vez e retorna o número de dias. As demais
-   funções derivam dela sem refazer o cálculo.            */
+/* ── DATAS / STATUS ── */
 let _hojeCache = null, _hojeTS = 0;
 function getHoje() {
   const now = Date.now();
@@ -164,8 +146,6 @@ function diasLabel(val) {
 function statusLabel(s) { return { verde:"Em dia", amarelo:"Vencendo em breve", vermelho:"Vencido" }[s]; }
 function statusIcon(s)  { return { verde:"✓", amarelo:"⚠", vermelho:"✕" }[s]; }
 
-/* statusGalpao: for…of com break antecipado — para assim
-   que encontra o primeiro vermelho, sem iterar o resto.   */
 function statusGalpao(gid) {
   const ext = dados[gid] || {};
   const ids = Object.keys(ext);
@@ -173,7 +153,7 @@ function statusGalpao(gid) {
   let temAmarelo = false;
   for (const id of ids) {
     const d = calcularDias(ext[id].validade);
-    if (d === -999 || d < 0) return "vermelho"; // sai imediatamente
+    if (d === -999 || d < 0) return "vermelho";
     if (d <= 30) temAmarelo = true;
   }
   return temAmarelo ? "amarelo" : "verde";
@@ -200,10 +180,6 @@ function atualizarStats() {
 /* ════════════════════════════════════════
    ABAS DE GALPÃO
    ════════════════════════════════════════ */
-
-/* renderizarAbas: full rebuild — necessário apenas quando
-   a estrutura muda (criar / excluir / renomear galpão).
-   Adiciona data-gid e .tab-qtd para uso em atualizarAbaStatus. */
 function renderizarAbas() {
   EL.tabsList.innerHTML = Object.keys(galpoes).map(gid => {
     const g      = galpoes[gid];
@@ -223,14 +199,10 @@ function renderizarAbas() {
   }).join("");
 }
 
-/* atualizarAbaStatus: atualiza SOMENTE o dot e o contador
-   de uma aba específica via data-gid — sem destruir/recriar
-   o HTML de todas as abas. Substitui renderizarAbas() nas
-   operações rotineiras (salvar, remover, registrar recarga). */
 function atualizarAbaStatus(gid) {
   const tab = EL.tabsList.querySelector(`.tab[data-gid="${gid}"]`);
-  if (!tab) { renderizarAbas(); return; } // fallback de segurança
-  tab.querySelector('.tab-dot').className = `tab-dot ${statusGalpao(gid)}`;
+  if (!tab) { renderizarAbas(); return; }
+  tab.querySelector('.tab-dot').className  = `tab-dot ${statusGalpao(gid)}`;
   tab.querySelector('.tab-qtd').textContent = Object.keys(dados[gid] || {}).length;
 }
 
@@ -238,7 +210,6 @@ function trocarGalpao(gid) {
   if (gid === galpaoAtivo) return;
   sairModoEdicaoSilencioso();
   fecharPainel();
-  // Troca só a classe "active" — sem reconstruir toda a lista de abas
   EL.tabsList.querySelector(`.tab[data-gid="${galpaoAtivo}"]`)?.classList.remove('active');
   EL.tabsList.querySelector(`.tab[data-gid="${gid}"]`)?.classList.add('active');
   galpaoAtivo = gid;
@@ -256,20 +227,164 @@ function subtitleAtual() {
     : `${qtd} extintor${qtd !== 1 ? "es" : ""} cadastrado${qtd !== 1 ? "s" : ""}`;
 }
 
+/* ════════════════════════════════════════
+   VIEWER — overflow:auto + transform:scale
+   ════════════════════════════════════════
+
+   Arquitetura:
+     #mapaContainer  → overflow:auto  (scroll nativo = pan limitado)
+       #mapaScaler   → sized to (iW*scale) × (iH*scale): cria a área scrollável
+         #mapa       → transform:scale(viewerScale), transform-origin:top left
+           img       → largura/altura natural
+           .pontos   → coordenadas em espaço original (dividem por viewerScale)
+
+   Zoom para o cursor: ajusta scrollLeft/scrollTop para manter o ponto
+   sob o cursor fixo antes e depois da mudança de escala.
+
+   Pan por drag: captura mousedown no container, movimenta via scroll.
+*/
+
+function _getImgDims() {
+  const nW = EL.mapaImg.naturalWidth;
+  const nH = EL.mapaImg.naturalHeight;
+  if (nW > 0 && nH > 0) return { w: nW, h: nH };
+  // Sem imagem: usa dimensões do container para fill
+  return {
+    w: EL.mapaContainer.clientWidth  || 900,
+    h: EL.mapaContainer.clientHeight || 540
+  };
+}
+
+/* applyViewerScale: aplica a escala e atualiza scaler + mapa transform.
+   pivotCX/CY (opcionais): ponto em coords do container para zoom centrado.
+   Sem pivot: centraliza a imagem no container (usado no fit inicial). */
+function applyViewerScale(newScale, pivotCX, pivotCY) {
+  const oldScale = viewerScale;
+  viewerScale = Math.max(VIEWER_MIN, Math.min(VIEWER_MAX, newScale));
+
+  const { w: iW, h: iH } = _getImgDims();
+  const scaledW = iW * viewerScale;
+  const scaledH = iH * viewerScale;
+  const cW = EL.mapaContainer.clientWidth;
+  const cH = EL.mapaContainer.clientHeight;
+
+  // Define o tamanho do scaler (área scrollável):
+  // Se a imagem é menor que o container → scaler = container (sem scrollbars)
+  // Se a imagem é maior               → scaler = imagem (scrollbars aparecem)
+  EL.mapaScaler.style.width  = Math.max(scaledW, cW) + "px";
+  EL.mapaScaler.style.height = Math.max(scaledH, cH) + "px";
+
+  // Define tamanho original da imagem no #mapa (o transform escala a partir daí)
+  EL.mapa.style.width     = iW + "px";
+  EL.mapa.style.height    = iH + "px";
+  EL.mapa.style.transform = `scale(${viewerScale})`;
+
+  // Centraliza o #mapa dentro do scaler quando a imagem é menor que o container
+  EL.mapa.style.left = (scaledW < cW ? (cW - scaledW) / 2 : 0) + "px";
+  EL.mapa.style.top  = (scaledH < cH ? (cH - scaledH) / 2 : 0) + "px";
+
+  if (pivotCX !== undefined) {
+    // Mantém o ponto sob o cursor fixo:
+    // pivotSX = posição do pivot no espaço do scaler antes do zoom
+    const pivotSX = EL.mapaContainer.scrollLeft + pivotCX;
+    const pivotSY = EL.mapaContainer.scrollTop  + pivotCY;
+    const ratio = viewerScale / oldScale;
+    EL.mapaContainer.scrollLeft = pivotSX * ratio - pivotCX;
+    EL.mapaContainer.scrollTop  = pivotSY * ratio - pivotCY;
+  } else {
+    // Centraliza o scroll (fit inicial / resetZoom)
+    EL.mapaContainer.scrollLeft = Math.max(0, (scaledW - cW) / 2);
+    EL.mapaContainer.scrollTop  = Math.max(0, (scaledH - cH) / 2);
+  }
+}
+
+/* fitViewer: calcula a escala que faz a imagem caber inteira
+   no container e centraliza. Chamada no onload e no resetZoom. */
+function fitViewer() {
+  const { w: iW, h: iH } = _getImgDims();
+  const cW = EL.mapaContainer.clientWidth;
+  const cH = EL.mapaContainer.clientHeight;
+  if (!cW || !cH) return;
+  const scale = Math.min(cW / iW, cH / iH); // fit: sem padding, imagem rasa nas bordas
+  applyViewerScale(scale); // sem pivot → centraliza
+}
+
 /* ── CARREGAR IMAGEM DO MAPA ── */
 function carregarMapa() {
   const src = galpoes[galpaoAtivo]?.imagem || "";
   EL.viewMapa.classList.toggle("fundo-claro", (galpoes[galpaoAtivo]?.fundo || "escuro") === "claro");
+
+  EL.mapaImg.onload  = null;
+  EL.mapaImg.onerror = null;
+
   if (src) {
-    EL.mapaImg.src = src;
     EL.mapaImg.classList.remove("no-image");
-    EL.mapaImg.onerror = () => { EL.mapaImg.src = ""; EL.mapaImg.classList.add("no-image"); };
+    EL.mapaImg.onload = () => {
+      EL.mapaImg.onload = null;
+      // Duplo rAF: garante que o browser terminou o layout flex antes de ler clientWidth/Height
+      requestAnimationFrame(() => requestAnimationFrame(fitViewer));
+    };
+    EL.mapaImg.onerror = () => {
+      EL.mapaImg.onerror = null;
+      EL.mapaImg.src = "";
+      EL.mapaImg.classList.add("no-image");
+      requestAnimationFrame(() => requestAnimationFrame(fitViewer));
+    };
+    EL.mapaImg.src = src;
+    // Imagem já em cache: complete=true, onload não vai re-disparar
+    if (EL.mapaImg.complete && EL.mapaImg.naturalWidth > 0) {
+      EL.mapaImg.onload = null;
+      requestAnimationFrame(() => requestAnimationFrame(fitViewer));
+    }
   } else {
     EL.mapaImg.src = "";
     EL.mapaImg.classList.add("no-image");
+    requestAnimationFrame(() => requestAnimationFrame(fitViewer));
   }
-  if (pz) pz.reset();
 }
+
+/* ── WHEEL ZOOM (centrado no cursor) ── */
+document.getElementById("mapaContainer").addEventListener("wheel", e => {
+  e.preventDefault();
+  const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  const rect   = EL.mapaContainer.getBoundingClientRect();
+  applyViewerScale(viewerScale * factor,
+    e.clientX - rect.left,
+    e.clientY - rect.top
+  );
+}, { passive: false });
+
+/* ── PAN POR DRAG ── */
+let _panActive = false, _panX = 0, _panY = 0, _panSL = 0, _panST = 0;
+
+document.getElementById("mapaContainer").addEventListener("mousedown", e => {
+  if (modoAtual === "colocar") return; // crosshair, click vai posicionar extintor
+  if (e.button !== 0) return;
+  // Se clicou num ponto e está em modo mover, o ponto vai interceptar via stopPropagation
+  _panActive = true;
+  _panX  = e.clientX;
+  _panY  = e.clientY;
+  _panSL = EL.mapaContainer.scrollLeft;
+  _panST = EL.mapaContainer.scrollTop;
+  EL.mapaContainer.style.cursor = "grabbing";
+  e.preventDefault();
+});
+
+document.addEventListener("mousemove", e => {
+  if (!_panActive) return;
+  EL.mapaContainer.scrollLeft = _panSL - (e.clientX - _panX);
+  EL.mapaContainer.scrollTop  = _panST - (e.clientY - _panY);
+});
+
+document.addEventListener("mouseup", () => {
+  if (!_panActive) return;
+  _panActive = false;
+  EL.mapaContainer.style.cursor = modoAtual === "colocar" ? "crosshair" : "grab";
+});
+
+document.getElementById("mapaContainer").addEventListener("mouseleave", () => {
+  if (pinFantasma) pinFantasma.style.display = "none";
+});
 
 /* ════════════════════════════════════════
    GERENCIAR GALPÕES
@@ -288,19 +403,16 @@ function confirmarNovoGalpao() {
   const imagem = EL.imagemGalpao.value.trim();
   const fundo  = document.querySelector('input[name="fundoGalpao"]:checked')?.value || "escuro";
   if (!nome) { toast("Informe o nome do galpão!", "err"); return; }
-
   const ids = Object.keys(galpoes);
   let novoId = String.fromCharCode(65 + ids.length);
   while (galpoes[novoId]) novoId += "_";
-
   galpoes[novoId]  = { nome, imagem: imagem || "", fundo };
   dados[novoId]    = {};
   posicoes[novoId] = {};
-
   fecharModalGalpao();
   salvarStorageImediato();
-  renderizarAbas();       // full rebuild (nova aba adicionada)
-  trocarGalpao(novoId);   // só troca classe active + carrega mapa
+  renderizarAbas();
+  trocarGalpao(novoId);
   toast(`${nome} criado!`, "ok");
 }
 
@@ -327,17 +439,14 @@ function confirmarExcluirGalpao() {
     fecharModalExcluirGalpao(); return;
   }
   const nome = galpoes[gid]?.nome || gid;
-  delete galpoes[gid];
-  delete dados[gid];
-  delete posicoes[gid];
-  delete pontoElsPorGalpao[gid];
+  delete galpoes[gid]; delete dados[gid]; delete posicoes[gid]; delete pontoElsPorGalpao[gid];
   fecharModalExcluirGalpao();
   salvarStorageImediato();
   if (galpaoAtivo === gid) {
     galpaoAtivo = Object.keys(galpoes)[0];
     carregarMapa();
   }
-  renderizarAbas(); // full rebuild (aba removida)
+  renderizarAbas();
   renderizarPontos();
   atualizarStats();
   toast(`${nome} excluído`, "warn");
@@ -345,10 +454,13 @@ function confirmarExcluirGalpao() {
 
 /* ════════════════════════════════════════
    PONTOS
+   As coordenadas top/left são SEMPRE em espaço original da imagem
+   (antes do scale). O transform no #mapa escala tudo junto.
+   Ao capturar cliques, convertemos de espaço renderizado para
+   espaço original dividindo por viewerScale.
    ════════════════════════════════════════ */
 function renderizarPontos() {
   EL.mapa.querySelectorAll(".ponto").forEach(el => el.remove());
-  // Limpa APENAS o mapa ativo — não invalida cache de outros galpões
   if (pontoElsPorGalpao[galpaoAtivo]) pontoElsPorGalpao[galpaoAtivo].clear();
   const ext = dados[galpaoAtivo] || {};
   Object.keys(ext).forEach(id => renderPonto(id));
@@ -359,8 +471,6 @@ function renderPonto(id) {
   const ext = dados[galpaoAtivo]?.[id];
   const pos = posicoes[galpaoAtivo]?.[id];
   if (!ext || !pos) return;
-
-  // Uma única chamada para dias; status derivado localmente
   const dias   = calcularDias(ext.validade);
   const status = (dias === -999 || dias < 0) ? "vermelho" : dias <= 30 ? "amarelo" : "verde";
 
@@ -392,28 +502,33 @@ function renderPonto(id) {
 function atualizarPonto(id) {
   const el = getPontoEls().get(String(id));
   if (!el) return;
-  const ext  = dados[galpaoAtivo]?.[id];
-  const dias = calcularDias(ext?.validade);
+  const ext    = dados[galpaoAtivo]?.[id];
+  const dias   = calcularDias(ext?.validade);
   const status = (dias === -999 || dias < 0) ? "vermelho" : dias <= 30 ? "amarelo" : "verde";
   el.className = `ponto ${status}${idAtivo == id ? " selecionado" : ""}`;
   const tt = el.querySelector(".ttip");
   if (tt) tt.textContent = `#${id} — ${ext?.tipo} · ${dias < 0 ? "VENCIDO" : dias === 0 ? "Hoje!" : dias + "d"}`;
 }
 
-/* ── DRAG (RAF + cache rect) ── */
+/* ── DRAG DE PONTO (mover extintor) ──────────────────────────
+   Todas as coordenadas de mouse são convertidas do espaço
+   renderizado (pixels na tela) para o espaço original da
+   imagem dividindo por viewerScale.                           */
 function iniciarDrag(div, id, e) {
   const rect = EL.mapa.getBoundingClientRect();
-  const ox   = e.clientX - rect.left - parseFloat(div.style.left);
-  const oy   = e.clientY - rect.top  - parseFloat(div.style.top);
-  let pendX  = parseFloat(div.style.left), pendY = parseFloat(div.style.top);
-  let rafId  = null, moveu = false;
+  // Offset em espaço original
+  const ox = (e.clientX - rect.left) / viewerScale - parseFloat(div.style.left);
+  const oy = (e.clientY - rect.top)  / viewerScale - parseFloat(div.style.top);
+  let pendX = parseFloat(div.style.left), pendY = parseFloat(div.style.top);
+  let rafId = null, moveu = false;
   div.style.willChange = "left, top";
   div.style.opacity    = "0.8";
   document.body.style.userSelect = "none";
 
   function onMove(ev) {
-    pendX = ev.clientX - rect.left - ox;
-    pendY = ev.clientY - rect.top  - oy;
+    // Converte para espaço original
+    pendX = (ev.clientX - rect.left) / viewerScale - ox;
+    pendY = (ev.clientY - rect.top)  / viewerScale - oy;
     moveu = true;
     if (!rafId) rafId = requestAnimationFrame(() => {
       div.style.left = pendX + "px";
@@ -437,16 +552,15 @@ function iniciarDrag(div, id, e) {
   document.addEventListener("mouseup",   onUp);
 }
 
-/* ── COLOCAR EXTINTOR ──
-   Listener registrado aqui (antes do _cacheEls) via getElementById
-   para não depender do EL ainda não inicializado.            */
+/* ── COLOCAR EXTINTOR ── */
 document.getElementById("mapa").addEventListener("click", e => {
   if (modoAtual !== "colocar" || !novoExtintorDados) return;
   if (e.target.closest(".ponto:not(.fantasma)")) return;
   const rect = EL.mapa.getBoundingClientRect();
-  const x    = Math.round(e.clientX - rect.left);
-  const y    = Math.round(e.clientY - rect.top);
-  const id   = novoExtintorDados.id;
+  // Converte de espaço renderizado → espaço original
+  const x = Math.round((e.clientX - rect.left) / viewerScale);
+  const y = Math.round((e.clientY - rect.top)  / viewerScale);
+  const id = novoExtintorDados.id;
   const { id: _k, ...rest } = novoExtintorDados;
   if (!dados[galpaoAtivo])    dados[galpaoAtivo]    = {};
   if (!posicoes[galpaoAtivo]) posicoes[galpaoAtivo] = {};
@@ -460,6 +574,7 @@ document.getElementById("mapa").addEventListener("click", e => {
   atualizarAbaStatus(galpaoAtivo);
   modoAtual = "mover";
   EL.mapaContainer.classList.remove("modo-adicionar");
+  EL.mapaContainer.style.cursor = "grab";
   EL.modoEdBadgeTexto.textContent = "Modo mover — arraste os extintores";
   toast(`Extintor #${id} posicionado!`, "ok");
 });
@@ -479,7 +594,9 @@ let _pinRaf = null;
 document.getElementById("mapaContainer").addEventListener("mousemove", e => {
   if (modoAtual !== "colocar" || !pinFantasma) return;
   const rect = EL.mapa.getBoundingClientRect();
-  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  // Posição em espaço original (ponto vive dentro do #mapa transformado)
+  const x = (e.clientX - rect.left) / viewerScale;
+  const y = (e.clientY - rect.top)  / viewerScale;
   if (!_pinRaf) _pinRaf = requestAnimationFrame(() => {
     pinFantasma.style.display = "block";
     pinFantasma.style.left    = x + "px";
@@ -487,10 +604,6 @@ document.getElementById("mapaContainer").addEventListener("mousemove", e => {
     _pinRaf = null;
   });
 });
-document.getElementById("mapaContainer").addEventListener("mouseleave", () => {
-  if (pinFantasma) pinFantasma.style.display = "none";
-});
-document.getElementById("mapaContainer").addEventListener("wheel", e => { if (pz) pz.zoomWithWheel(e); });
 
 /* ════════════════════════════════════════
    MODO EDIÇÃO
@@ -504,10 +617,10 @@ function fecharModalEdicao() { EL.modalEdicao.classList.add("hidden"); }
 function entrarModoMover() {
   fecharModalEdicao();
   modoAtual = "mover";
-  destruirPanzoom();
   EL.btnEdicao.classList.add("ativo");
   EL.modoEdBadge.classList.remove("hidden");
   EL.modoEdBadgeTexto.textContent = "Modo mover — arraste os extintores";
+  EL.mapaContainer.style.cursor = "grab";
   fecharPainel();
   toast("Modo mover ativo", "warn");
 }
@@ -527,10 +640,10 @@ function sairModoEdicaoSilencioso() {
   modoAtual = null;
   novoExtintorDados = null;
   if (pinFantasma) { pinFantasma.remove(); pinFantasma = null; }
-  criarPanzoom();
   EL.btnEdicao.classList.remove("ativo");
   EL.modoEdBadge.classList.add("hidden");
   EL.mapaContainer.classList.remove("modo-adicionar");
+  EL.mapaContainer.style.cursor = "grab";
 }
 
 /* ── ID CUSTOMIZADO ── */
@@ -544,10 +657,6 @@ function idJaExiste(val) {
   return Object.keys(dados[galpaoAtivo] || {}).includes(String(val).trim());
 }
 
-/* validarIdDebounce: 80ms de debounce no oninput.
-   Antes, validarId() era chamado a cada tecla com 3 getElementById
-   + classList mutations. Com debounce, só dispara quando o usuário
-   pausa de digitar, eliminando travadas em IDs longos.         */
 let _validarTimer = null;
 function validarIdDebounce(val) {
   clearTimeout(_validarTimer);
@@ -576,7 +685,7 @@ function validarId(val) {
 function usarProximoId() {
   const s = proximoIdDisponivel();
   EL.novoId.value = s;
-  validarId(s); // imediato — ação de botão, não digitação
+  validarId(s);
   EL.novoId.focus();
 }
 function confirmarCadastro() {
@@ -596,11 +705,11 @@ function confirmarCadastro() {
   EL.btnConfirmarCadastro.disabled = false;
 
   modoAtual = "colocar";
-  destruirPanzoom();
   EL.btnEdicao.classList.add("ativo");
   EL.modoEdBadge.classList.remove("hidden");
   EL.modoEdBadgeTexto.textContent = "Clique no mapa para posicionar";
   EL.mapaContainer.classList.add("modo-adicionar");
+  EL.mapaContainer.style.cursor = "crosshair";
   criarPinFantasma();
   toast("Clique no mapa para posicionar o extintor", "warn");
 }
@@ -620,7 +729,6 @@ function abrirPainel(id) {
   idAtivo = id;
   const el = getPontoEls().get(String(id));
   if (el) el.classList.add("selecionado");
-
   const ext    = dados[galpaoAtivo]?.[id];
   const status = calcularStatus(ext?.validade);
   EL.dpId.textContent         = `EXTINTOR #${id}`;
@@ -642,11 +750,6 @@ function fecharPainel() {
   idAtivo = null;
   EL.detailPanel.classList.add("hidden");
 }
-
-/* _atualizarPainelStatus: atualiza SOMENTE a barra de status
-   do painel aberto, sem re-renderizar o painel inteiro.
-   Antes, salvarEdicao() chamava abrirPainel() completo (7
-   getElementById + 7 atribuições + toggle de classe).       */
 function _atualizarPainelStatus() {
   const ext = dados[galpaoAtivo]?.[idAtivo];
   if (!ext) return;
@@ -657,7 +760,6 @@ function _atualizarPainelStatus() {
   EL.dpStatusText.textContent = statusLabel(status);
   EL.dpDias.textContent       = ext.validade ? diasLabel(ext.validade) : "—";
 }
-
 function salvarEdicao() {
   if (!idAtivo) return;
   const val = EL.editValidade.value;
@@ -669,18 +771,17 @@ function salvarEdicao() {
   salvarStorageImediato();
   atualizarPonto(idAtivo);
   atualizarStats();
-  atualizarAbaStatus(galpaoAtivo);  // antes: renderizarAbas() full rebuild
-  _atualizarPainelStatus();         // antes: abrirPainel() full re-render
+  atualizarAbaStatus(galpaoAtivo);
+  _atualizarPainelStatus();
   if (viewAtual === "lista") renderizarLista();
   toast("Extintor atualizado!", "ok");
 }
-
 function trocarValidade() {
   if (!idAtivo) return;
   const nova    = new Date(); nova.setFullYear(nova.getFullYear() + 1);
   const novaVal = nova.toISOString().split("T")[0];
   dados[galpaoAtivo][idAtivo].validade = novaVal;
-  EL.editValidade.value = novaVal; // mantém o campo sincronizado
+  EL.editValidade.value = novaVal;
   salvarStorageImediato();
   atualizarPonto(idAtivo);
   atualizarStats();
@@ -689,7 +790,6 @@ function trocarValidade() {
   if (viewAtual === "lista") renderizarLista();
   toast("Recarga registrada! Válido por mais 1 ano.", "ok");
 }
-
 function removerExtintor() {
   if (!idAtivo) return;
   if (!confirm(`Remover o Extintor #${idAtivo} de ${galpoes[galpaoAtivo]?.nome}?`)) return;
@@ -702,7 +802,7 @@ function removerExtintor() {
   delete posicoes[galpaoAtivo][id];
   salvarStorageImediato();
   atualizarStats();
-  atualizarAbaStatus(galpaoAtivo); // antes: renderizarAbas() full rebuild
+  atualizarAbaStatus(galpaoAtivo);
   if (viewAtual === "lista") renderizarLista();
   toast(`Extintor #${id} removido`, "warn");
 }
@@ -720,13 +820,11 @@ function setView(v) {
   EL.viewSub.textContent   = subtitleAtual();
   if (v === "lista") renderizarLista();
 }
-
 let _listaTimer = null;
 function filtrarLista(v) {
   clearTimeout(_listaTimer);
   _listaTimer = setTimeout(() => { if (viewAtual === "lista") renderizarLista(v); }, 150);
 }
-
 function renderizarLista(filtro = "") {
   const ext = dados[galpaoAtivo] || {};
   let ids = Object.keys(ext);
@@ -743,7 +841,6 @@ function renderizarLista(filtro = "") {
     return;
   }
   ids.sort((a, b) => isNaN(a) || isNaN(b) ? a.localeCompare(b) : +a - +b);
-  // calcularDias() chamado UMA vez por card (antes: calcularStatus + diasRestantes = 2×)
   EL.listaContainer.innerHTML = ids.map(id => {
     const e      = ext[id];
     const dias   = calcularDias(e.validade);
@@ -757,7 +854,6 @@ function renderizarLista(filtro = "") {
     </div>`;
   }).join("");
 }
-
 function abrirPainelLista(id) {
   setView("mapa");
   EL.navItems[0].classList.add("active");
@@ -765,15 +861,8 @@ function abrirPainelLista(id) {
   setTimeout(() => abrirPainel(id), 50);
 }
 
-/* ════════════════════════════════════════
-   PANZOOM
-   ════════════════════════════════════════ */
-function criarPanzoom() {
-  if (pz) return;
-  pz = Panzoom(document.getElementById("mapa"), { maxScale:5, minScale:0.4, contain:"outside" });
-}
-function destruirPanzoom() { if (!pz) return; pz.destroy(); pz = null; }
-function resetZoom()        { if (pz) pz.reset(); }
+/* ── ZOOM RESET ── */
+function resetZoom() { fitViewer(); }
 
 /* ── TOAST ── */
 function toast(msg, tipo = "") {
@@ -823,7 +912,6 @@ function abrirRenomearGalpao(e, gid) {
   setTimeout(() => { EL.renomearGalpaoNome.focus(); EL.renomearGalpaoNome.select(); }, 100);
 }
 function fecharModalRenomear() { EL.modalRenomear.classList.add("hidden"); }
-
 function confirmarRenomear() {
   const gid    = EL.renomearGalpaoId.value;
   const nome   = EL.renomearGalpaoNome.value.trim();
@@ -836,7 +924,7 @@ function confirmarRenomear() {
   fecharModalRenomear();
   salvarStorageImediato();
   if (gid === galpaoAtivo) carregarMapa();
-  renderizarAbas(); // full rebuild (nome da aba mudou)
+  renderizarAbas();
   atualizarStats();
   toast(`${nome} atualizado!`, "ok");
 }
@@ -845,8 +933,7 @@ function confirmarRenomear() {
    INIT
    ════════════════════════════════════════ */
 carregarStorage();
-_cacheEls();        // popula EL{} — deve rodar antes de qualquer função que usa EL
-criarPanzoom();
+_cacheEls();
 renderizarAbas();
 carregarMapa();
 renderizarPontos();

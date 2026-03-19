@@ -7,7 +7,6 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
-  <script src="https://unpkg.com/@panzoom/panzoom/dist/panzoom.min.js"></script>
 </head>
 <body>
 
@@ -158,7 +157,7 @@
   </div>
 </div>
 
-<!-- ══ MODAL: RENOMEAR / EDITAR GALPÃO ══ -->
+<!-- ══ MODAL: EDITAR GALPÃO ══ -->
 <div id="modalRenomear" class="modal-overlay hidden" onclick="fecharModalRenomear()">
   <div class="modal-box modal-box-sm" onclick="event.stopPropagation()">
     <div class="modal-header">
@@ -231,7 +230,6 @@
     </button>
   </nav>
 
-  <!-- Stats do galpão ativo -->
   <div class="stats-label" id="statsLabel">Galpão A</div>
   <div class="stat-cards">
     <div class="stat-card"><span class="sc-num" id="statTotal">0</span><span class="sc-label">Total</span></div>
@@ -272,7 +270,6 @@
 </aside>
 
 <main id="main">
-  <!-- TOPBAR com ABAS DE GALPÃO -->
   <div id="topbar">
     <div class="topbar-left">
       <h1 id="viewTitle">Mapa de Extintores</h1>
@@ -286,7 +283,6 @@
     </div>
   </div>
 
-  <!-- BARRA DE ABAS DOS GALPÕES -->
   <div id="tabsBar">
     <div id="tabsList"></div>
     <button id="btnAddGalpao" onclick="abrirModalGalpao()" title="Adicionar galpão">
@@ -297,9 +293,18 @@
 
   <!-- VIEW MAPA -->
   <div id="viewMapa" class="view">
+    <!--
+      #mapaContainer  → overflow:auto  — scroll nativo = pan limitado pelas bordas
+        #mapaScaler   → sized via JS para criar a área scrollável correta
+          #mapa       → transform:scale(viewerScale), transform-origin:top left
+            img       → dimensões naturais
+            .pontos   → coordenadas em espaço original da imagem
+    -->
     <div id="mapaContainer">
-      <div id="mapa">
-        <img id="mapaImg" src="" alt="Planta" draggable="false">
+      <div id="mapaScaler">
+        <div id="mapa">
+          <img id="mapaImg" src="" alt="Planta" draggable="false">
+        </div>
       </div>
     </div>
   </div>
