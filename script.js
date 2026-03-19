@@ -260,17 +260,30 @@ function subtitleAtual() {
 function carregarMapa() {
   const src = galpoes[galpaoAtivo]?.imagem || "";
   EL.viewMapa.classList.toggle("fundo-claro", (galpoes[galpaoAtivo]?.fundo || "escuro") === "claro");
+
+  // Limpa handlers anteriores antes de qualquer coisa
+  EL.mapaImg.onload  = null;
+  EL.mapaImg.onerror = null;
+
   if (src) {
     EL.mapaImg.classList.remove("no-image");
     EL.mapaImg.onload  = () => fitMapa();
-    EL.mapaImg.onerror = () => { EL.mapaImg.src = ""; EL.mapaImg.classList.add("no-image"); setTimeout(fitMapa, 30); };
+    EL.mapaImg.onerror = () => {
+      EL.mapaImg.onerror = null;
+      EL.mapaImg.src = "";
+      EL.mapaImg.classList.add("no-image");
+      setTimeout(fitMapa, 50);
+    };
     EL.mapaImg.src = src;
-    // Imagem já em cache do browser: onload não re-dispara, chama direto
-    if (EL.mapaImg.complete && EL.mapaImg.naturalWidth) fitMapa();
+    // Se já estava em cache e complete=true o onload não vai disparar de novo
+    if (EL.mapaImg.complete && EL.mapaImg.naturalWidth > 0) {
+      EL.mapaImg.onload = null;
+      fitMapa();
+    }
   } else {
     EL.mapaImg.src = "";
     EL.mapaImg.classList.add("no-image");
-    setTimeout(fitMapa, 30); // espera layout pintar as dimensões mínimas
+    setTimeout(fitMapa, 50);
   }
 }
 
@@ -775,9 +788,8 @@ function criarPanzoom() {
   if (pz) return;
   pz = Panzoom(document.getElementById("mapa"), {
     maxScale: 5,
-    minScale: 0.05,   // permite zoom-out suficiente pra qualquer imagem
-    contain:  false,  // livre pra centralizar no fitMapa sem briga
-    canvas:   true,   // performance: renderiza em layer separado
+    minScale: 0.05,
+    contain:  false,
   });
 }
 function destruirPanzoom() { if (!pz) return; pz.destroy(); pz = null; }
