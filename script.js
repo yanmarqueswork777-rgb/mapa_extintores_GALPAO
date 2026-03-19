@@ -260,36 +260,15 @@ function subtitleAtual() {
 function carregarMapa() {
   const src = galpoes[galpaoAtivo]?.imagem || "";
   EL.viewMapa.classList.toggle("fundo-claro", (galpoes[galpaoAtivo]?.fundo || "escuro") === "claro");
-
-  // Remove handlers antigos para não disparar duplo ao trocar de galpão
-  EL.mapaImg.onload  = null;
-  EL.mapaImg.onerror = null;
-
   if (src) {
+    EL.mapaImg.src = src;
     EL.mapaImg.classList.remove("no-image");
-
-    // Se a imagem já estava no cache do browser, complete=true e onload não dispara
-    if (EL.mapaImg.src === new URL(src, location.href).href && EL.mapaImg.complete && EL.mapaImg.naturalWidth > 0) {
-      requestAnimationFrame(() => requestAnimationFrame(fitMapa));
-    } else {
-      EL.mapaImg.onload = () => {
-        EL.mapaImg.onload = null;
-        requestAnimationFrame(() => requestAnimationFrame(fitMapa));
-      };
-      EL.mapaImg.onerror = () => {
-        EL.mapaImg.onerror = null;
-        EL.mapaImg.src = "";
-        EL.mapaImg.classList.add("no-image");
-        requestAnimationFrame(() => requestAnimationFrame(fitMapa));
-      };
-      EL.mapaImg.src = src;
-    }
+    EL.mapaImg.onerror = () => { EL.mapaImg.src = ""; EL.mapaImg.classList.add("no-image"); };
   } else {
     EL.mapaImg.src = "";
     EL.mapaImg.classList.add("no-image");
-    // Sem imagem: container flex precisa de um frame pra ter altura definida
-    requestAnimationFrame(() => requestAnimationFrame(fitMapa));
   }
+  if (pz) pz.reset();
 }
 
 /* ════════════════════════════════════════
@@ -791,42 +770,10 @@ function abrirPainelLista(id) {
    ════════════════════════════════════════ */
 function criarPanzoom() {
   if (pz) return;
-  pz = Panzoom(document.getElementById("mapa"), {
-    maxScale: 5,
-    minScale: 0.05,
-    contain:  false,
-  });
+  pz = Panzoom(document.getElementById("mapa"), { maxScale:5, minScale:0.4, contain:"outside" });
 }
 function destruirPanzoom() { if (!pz) return; pz.destroy(); pz = null; }
-function resetZoom()        { fitMapa(); }
-
-/* fitMapa — calcula a escala "fit" e centraliza a imagem.
-   Só é chamada APÓS onload da imagem + requestAnimationFrame,
-   então as dimensões reais sempre estão disponíveis.        */
-function fitMapa() {
-  if (!pz) return;
-
-  const cW = EL.mapaContainer.clientWidth;
-  const cH = EL.mapaContainer.clientHeight;
-  if (cW < 10 || cH < 10) return; // container ainda sem dimensões, desiste
-
-  // Usa naturalWidth se disponível (imagem carregada), senão min-width do CSS
-  const iW = EL.mapaImg.naturalWidth  > 0 ? EL.mapaImg.naturalWidth  : 900;
-  const iH = EL.mapaImg.naturalHeight > 0 ? EL.mapaImg.naturalHeight : 540;
-
-  const PAD   = 48;
-  const scale = Math.min((cW - PAD * 2) / iW, (cH - PAD * 2) / iH);
-  const sf    = Math.min(Math.max(scale, 0.05), 2); // nunca amplia além de 2× no fit
-
-  // Com transform-origin: 0 0 e transform: translate(x,y) scale(s),
-  // um ponto (px, py) do elemento fica em (x + px*sf, y + py*sf) na tela.
-  // Para centralizar: x + iW*sf/2 = cW/2 → x = (cW - iW*sf) / 2
-  const x = (cW - iW * sf) / 2;
-  const y = (cH - iH * sf) / 2;
-
-  pz.zoom(sf, { animate: false });
-  pz.pan(x, y, { animate: false });
-}
+function resetZoom()        { if (pz) pz.reset(); }
 
 /* ── TOAST ── */
 function toast(msg, tipo = "") {
